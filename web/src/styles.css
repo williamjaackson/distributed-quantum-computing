@@ -616,6 +616,13 @@ select {
   line-height: 1.1;
 }
 
+/* A hero is one number at 34px. An allocation across four consumers is a
+   sentence, and a sentence at 34px is three lines of shouting. */
+.hero-value.is-long {
+  font-size: 22px;
+  line-height: 1.25;
+}
+
 .hero-hint {
   font-size: 11px;
   color: var(--text-muted);
@@ -623,8 +630,12 @@ select {
 
 .out-row {
   display: flex;
+  /* Wrapping is what makes the hint's flex-basis: 100% put it on its own line.
+     Without it a long value squeezes the hint into a few pixels and it comes
+     out as one letter per line. */
+  flex-wrap: wrap;
   align-items: baseline;
-  gap: 10px;
+  gap: 2px 10px;
   padding: 5px 0;
   border-top: 1px solid var(--grid);
 }

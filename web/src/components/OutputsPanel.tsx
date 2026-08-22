@@ -25,7 +25,9 @@ export function OutputsPanel({ readouts, bits, norm }: Props) {
       {hero && (
         <div className="hero">
           <div className="hero-label">{hero.label}</div>
-          <div className="hero-value">{hero.value}</div>
+          <div className={`hero-value${hero.value.length > 14 ? ' is-long' : ''}`}>
+            {hero.value}
+          </div>
           {hero.hint && <div className="hero-hint">{hero.hint}</div>}
         </div>
       )}
