@@ -501,7 +501,10 @@ pub fn plan_gate(
             }
             return Ok(steps);
         }
-        Op::Unitary { controls, .. } => (&qubits[..controls], qubits[controls]),
+        Op::Unitary { .. } => {
+            let controls = op.controls_for(qubits.len());
+            (&qubits[..controls], qubits[controls])
+        }
     };
 
     let (base, base_params) = op.base().expect("Swap handled above");

@@ -277,6 +277,13 @@ fn gate_menu() -> Vec<(&'static str, usize, Vec<f64>)> {
         ("swap", 2, vec![]),
         ("ccx", 3, vec![]),
         ("ccz", 3, vec![]),
+        // Variadic names, at the arity the sweep happens to pass them.
+        ("mcx", 2, vec![]),
+        ("mcz", 2, vec![]),
+        ("mcx", 3, vec![]),
+        ("mcz", 3, vec![]),
+        ("mcx", 4, vec![]),
+        ("mcz", 4, vec![]),
     ]
 }
 

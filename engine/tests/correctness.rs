@@ -873,3 +873,135 @@ fn reduced_two_of_a_bell_pair_is_the_bell_projector() {
         }
     }
 }
+
+// ---------------------------------------------------------------------------
+// Multi-controlled gates
+//
+// `apply_controlled` folds any number of controls into one mask, so the kernels
+// never had a two-control limit — only name dispatch did. These check that the
+// variadic names reach the same kernel with the right split, at every control
+// count a register that size allows.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn multi_controlled_matches_naive_reference() {
+    for n in 2..=6u32 {
+        let amps = random_state(n, 0x9C7 + n as u64);
+        for controls in 1..n {
+            let qubits: Vec<u32> = (0..=controls).collect();
+            let ctrl = &qubits[..controls as usize];
+            let target = qubits[controls as usize];
+            for (name, gate) in [("mcx", Gate::X), ("mcz", Gate::Z)] {
+                let mut sv = state_from(n, &amps);
+                qsim::dispatch::apply_named(&mut sv, name, &qubits, &[]).unwrap();
+                let want = naive_controlled(&amps, gate.matrix(), ctrl, target);
+                assert_states_close(
+                    sv.amps(),
+                    &want,
+                    &format!("{name} with {controls} control(s), n={n}"),
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn multi_controlled_agrees_with_the_fixed_arity_names() {
+    // mcx with two controls *is* ccx; a variadic name that disagreed with the
+    // fixed one would be the subtle kind of wrong.
+    let amps = random_state(4, 0xA11A5);
+    for (variadic, fixed, qubits) in [
+        ("mcx", "cx", vec![0u32, 1]),
+        ("mcz", "cz", vec![2u32, 3]),
+        ("mcx", "ccx", vec![0u32, 1, 2]),
+        ("mcz", "ccz", vec![1u32, 2, 3]),
+    ] {
+        let mut a = state_from(4, &amps);
+        let mut b = state_from(4, &amps);
+        qsim::dispatch::apply_named(&mut a, variadic, &qubits, &[]).unwrap();
+        qsim::dispatch::apply_named(&mut b, fixed, &qubits, &[]).unwrap();
+        assert_states_close(a.amps(), b.amps(), &format!("{variadic} vs {fixed}"));
+    }
+}
+
+#[test]
+fn multi_controlled_flips_only_the_all_ones_row() {
+    // The property Grover's oracle relies on: with every control set, and only
+    // then, the target moves.
+    let n = 5u32;
+    for controls in 1..n {
+        let qubits: Vec<u32> = (0..=controls).collect();
+        let cmask: usize = (0..controls).map(|c| 1usize << c).sum();
+        let target_bit = 1usize << qubits[controls as usize];
+        for start in 0..(1usize << n) {
+            let mut sim = Simulator::new(n).unwrap();
+            sim.set_basis_state(start).unwrap();
+            sim.apply_named("mcx", &qubits, &[]).unwrap();
+            let want = if start & cmask == cmask { start ^ target_bit } else { start };
+            let p = sim.probabilities().unwrap();
+            assert_close(p[want], 1.0, &format!("mcx({controls} controls) on |{start}>"));
+        }
+    }
+}
+
+#[test]
+fn multi_controlled_needs_at_least_one_control() {
+    let mut sim = Simulator::new(3).unwrap();
+    // One qubit is a plain gate, and saying "multi-controlled" for it is a
+    // caller mistake worth reporting rather than silently accepting.
+    assert!(sim.apply_named("mcz", &[0], &[]).is_err(), "mcz with no controls");
+    assert!(sim.apply_named("mcx", &[], &[]).is_err(), "mcx with no qubits");
+    assert!(sim.apply_named("mcx", &[0, 0], &[]).is_err(), "mcx with a repeated qubit");
+}
+
+#[test]
+fn grover_scales_with_a_multi_controlled_oracle() {
+    // The reason any of this exists: a phase flip on one state out of 2^n is a Z
+    // with n-1 controls, so an n-qubit Grover search is only expressible once
+    // the control count is not fixed by the gate's name.
+    for n in 2..=8u32 {
+        let marked = (1usize << n) - 2;
+        let rounds = ((std::f64::consts::FRAC_PI_4) * ((1u64 << n) as f64).sqrt()).floor() as u32;
+        let mut sim = Simulator::new(n).unwrap();
+        let all: Vec<u32> = (0..n).collect();
+
+        for q in 0..n {
+            sim.apply_named("h", &[q], &[]).unwrap();
+        }
+        for _ in 0..rounds.max(1) {
+            // Oracle: relabel the marked state as all-ones, flip its phase, undo.
+            for q in 0..n {
+                if (marked >> q) & 1 == 0 {
+                    sim.apply_named("x", &[q], &[]).unwrap();
+                }
+            }
+            sim.apply_named("mcz", &all, &[]).unwrap();
+            for q in 0..n {
+                if (marked >> q) & 1 == 0 {
+                    sim.apply_named("x", &[q], &[]).unwrap();
+                }
+            }
+            // Diffusion: reflect about the average.
+            for q in 0..n {
+                sim.apply_named("h", &[q], &[]).unwrap();
+                sim.apply_named("x", &[q], &[]).unwrap();
+            }
+            sim.apply_named("mcz", &all, &[]).unwrap();
+            for q in 0..n {
+                sim.apply_named("x", &[q], &[]).unwrap();
+                sim.apply_named("h", &[q], &[]).unwrap();
+            }
+        }
+
+        let p = sim.probabilities().unwrap();
+        let flat = 1.0 / (1u64 << n) as f64;
+        assert!(
+            p[marked] > 0.6 && p[marked] > flat * 4.0,
+            "n={n}: P(marked) = {} against a flat {flat}",
+            p[marked]
+        );
+        let peak = (0..p.len()).max_by(|a, b| p[*a].partial_cmp(&p[*b]).unwrap()).unwrap();
+        assert_eq!(peak, marked, "n={n}: peak is not the marked state");
+        assert_close(sim.norm(), 1.0, &format!("norm after Grover n={n}"));
+    }
+}
