@@ -21,7 +21,16 @@
 import type { Backend, EngineLimits, Execution } from './backend';
 import { createBackend, engineLimits, loadWasm, TOP_K } from './backend';
 import { GATE_PARAMS, gateArity, GATE_CONTROLS } from './steps';
-import type { Classical, Frame, InputValues, Program, Step, Timeline } from './types';
+import type {
+  Classical,
+  Frame,
+  InputValues,
+  Measurement,
+  Program,
+  ShotOutcome,
+  Step,
+  Timeline,
+} from './types';
 
 /**
  * Largest register for which every frame keeps a full copy of the state.
@@ -42,6 +51,32 @@ export const LINK_BUDGET = 1.5e8;
 
 /** Backstop against a program whose generator never terminates. */
 export const MAX_STEPS = 2048;
+
+/**
+ * Amplitude visits allowed for taking shots of a circuit that measures.
+ *
+ * Such a circuit collapses differently every run, so N shots means running it N
+ * times — there is no shortcut, and `shots x gates x 2^n` grows fast. When the
+ * budget cannot afford the shots asked for, fewer are taken and the timeline
+ * says so; a quietly reduced shot count would make the answer look more certain
+ * than it is.
+ */
+export const SHOT_BUDGET = 4e8;
+
+/** Shot counts the UI offers. */
+export const SHOT_OPTIONS = [128, 1024, 8192, 65536];
+
+/**
+ * Seed for one shot's measurement draws.
+ *
+ * Derived from the shot index rather than taken from the user, so the same
+ * inputs always give the same answer and "shot 7" is always the same run. A
+ * seed control would be asking the reader to manage the thing shots exist to
+ * average away.
+ */
+function seedFor(shot: number): number {
+  return (0x5eed + Math.imul(shot, 0x9e3779b1)) >>> 0;
+}
 
 export function keepAmplitudes(nQubits: number, limits: EngineLimits): boolean {
   return nQubits <= Math.min(AMPS_QUBIT_LIMIT, limits.fullArrayLimit);
@@ -122,6 +157,10 @@ export interface RunOptions {
   execution: Execution;
   /** Allow the engine's full ceiling instead of the interactive one. */
   unlocked: boolean;
+  /** How many times to measure the circuit. */
+  shots: number;
+  /** Which shot the recorded frames should be. */
+  shotIndex: number;
   /** Called as steps complete, so a long run can show progress. */
   onProgress?: (done: number) => void;
   /** Checked between steps; a true return abandons the run. */
@@ -138,10 +177,9 @@ export interface RunOptions {
 export async function runProgram(
   program: Program,
   values: InputValues,
-  seed: number,
   options: RunOptions,
 ): Promise<Timeline> {
-  const { execution, unlocked, onProgress, cancelled } = options;
+  const { execution, unlocked, shots, shotIndex, onProgress, cancelled } = options;
   // Every limit below comes from the engine, so the module has to be up first.
   await loadWasm();
   const limits = engineLimits();
@@ -169,7 +207,7 @@ export async function runProgram(
   let backend: Backend | null = null;
   const started = performance.now();
   try {
-    backend = await createBackend(nQubits, seed, execution);
+    backend = await createBackend(nQubits, seedFor(shotIndex), execution);
     frames.push(await snapshot(backend, 0, bits, want));
 
     if (!error) {
@@ -195,6 +233,22 @@ export async function runProgram(
     }
   } catch (e) {
     error = e instanceof Error ? e.message : String(e);
+  }
+  // The answer. A state vector is not a result: what a program produces is what
+  // comes back when you measure it, so every run is measured.
+  let outcomes: ShotOutcome[] = [];
+  let measurement: Measurement = { requested: shots, taken: 0, method: 'sampled' };
+  if (backend && !error) {
+    try {
+      const collapses = steps.filter((s) => s.kind === 'measure').length;
+      const result = collapses === 0
+        ? await sampleOnce(backend, shots)
+        : await repeatRun(backend, program, values, steps.length, nQubits, shots, cancelled);
+      outcomes = result.outcomes;
+      measurement = result.measurement;
+    } catch (e) {
+      error = e instanceof Error ? e.message : String(e);
+    }
   }
   const elapsedMs = performance.now() - started;
 
@@ -224,7 +278,7 @@ export async function runProgram(
   return {
     program,
     values,
-    seed,
+    shotIndex,
     nQubits,
     amplitudeCount: 2 ** nQubits,
     wireLabels,
@@ -234,6 +288,8 @@ export async function runProgram(
     // What the frames actually hold, not what was asked for. A backend is
     // allowed to decline: the sharded path has no cross-shard two-qubit reduced
     // matrix, so it returns no links however affordable the budget said they were.
+    shots: outcomes,
+    measurement,
     detail: {
       amps: frames[0].amps !== null,
       links: frames[0].links !== null,
@@ -270,35 +326,91 @@ async function snapshot(
   };
 }
 
+// ---------------------------------------------------------------------------
+// Taking the shots
+// ---------------------------------------------------------------------------
+
+interface Ensemble {
+  outcomes: ShotOutcome[];
+  measurement: Measurement;
+}
+
+function ranked(counts: Map<number, number>): ShotOutcome[] {
+  return [...counts]
+    .map(([index, count]) => ({ index, count }))
+    .sort((a, b) => b.count - a.count || a.index - b.index);
+}
+
 /**
- * Draw `shots` samples of the state as it stands after `upto` steps, using the
- * engine's own sampler.
+ * Shots of a circuit that never measures.
  *
- * A recorded frame is a summary, not a state, and no backend has a "load this
- * state" entry point — nothing the engine does needs one. So this replays the
- * program to that step on a fresh register and samples there, which keeps the
- * sampling inside the engine instead of reimplemented over the recorded top-k.
- * The cost is a second run, which is why the Shots view asks before doing it on
- * anything large.
+ * Every shot shares the same final state, so the engine's sampler draws all of
+ * them from it in one pass. Exact, and no more expensive for a million shots
+ * than for one.
  */
-export async function sampleAt(
-  timeline: Timeline,
-  upto: number,
+async function sampleOnce(backend: Backend, shots: number): Promise<Ensemble> {
+  const counts = await backend.sample(shots, seedFor(0));
+  return {
+    outcomes: ranked(counts),
+    measurement: { requested: shots, taken: shots, method: 'sampled' },
+  };
+}
+
+/**
+ * Shots of a circuit that measures, by running it again per shot.
+ *
+ * There is no shortcut here: a mid-circuit measurement collapses the state, a
+ * later gate can depend on the outcome, and so each shot is a different run.
+ * Frames are not recorded for these — that is what makes it affordable — and
+ * the register is reset rather than reallocated.
+ */
+async function repeatRun(
+  backend: Backend,
+  program: Program,
+  values: InputValues,
+  gates: number,
+  nQubits: number,
   shots: number,
-  sampleSeed: number,
-  execution: Execution,
-): Promise<Map<number, number>> {
-  const backend = await createBackend(timeline.nQubits, timeline.seed, execution);
-  try {
-    for (let i = 0; i < upto && i < timeline.steps.length; i++) {
-      const step = timeline.steps[i];
-      if (step.kind === 'measure') await backend.measure(step.qubit);
+  cancelled?: () => boolean,
+): Promise<Ensemble> {
+  const perShot = Math.max(1, gates) * 2 ** nQubits;
+  const affordable = Math.max(1, Math.floor(SHOT_BUDGET / perShot));
+  const taken = Math.min(shots, affordable);
+  const counts = new Map<number, number>();
+  const bits: Record<string, number> = {};
+  const cl: Classical = {
+    get: (bit) => bits[bit],
+    bit: (name) => bits[name] ?? 0,
+    all: () => ({ ...bits }),
+  };
+
+  for (let shot = 0; shot < taken; shot++) {
+    if (cancelled?.()) break;
+    await backend.reset(seedFor(shot));
+    for (const key of Object.keys(bits)) delete bits[key];
+    for (const step of program.build(values, cl)) {
+      if (step.kind === 'measure') bits[step.bit] = await backend.measure(step.qubit);
       else await backend.applyGate(step.name, step.qubits, step.params);
     }
-    return await backend.sample(shots, sampleSeed);
-  } finally {
-    backend.dispose();
+    // One draw of whatever is left undetermined. A measured qubit is already
+    // collapsed, so this reads the register the way a machine would.
+    for (const [index, count] of await backend.sample(1, seedFor(shot ^ 0x5f5e1))) {
+      counts.set(index, (counts.get(index) ?? 0) + count);
+    }
   }
+
+  return {
+    outcomes: ranked(counts),
+    measurement: {
+      requested: shots,
+      taken,
+      method: 'repeated',
+      note:
+        taken < shots
+          ? `this circuit measures, so each shot is a separate run — ${taken.toLocaleString()} of them fits the budget`
+          : undefined,
+    },
+  };
 }
 
 export { TOP_K };

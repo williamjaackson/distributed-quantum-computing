@@ -55,6 +55,14 @@ export interface Backend {
   readonly shards: number;
   applyGate(name: string, qubits: number[], params: number[]): Promise<void>;
   measure(qubit: number): Promise<number>;
+  /**
+   * Return to |0…0> and reseed the measurement draw.
+   *
+   * Taking N shots of a circuit that measures means running it N times, and
+   * allocating a register per shot would dominate the cost of the shots
+   * themselves — at 26 qubits it would be a gigabyte a time.
+   */
+  reset(seed: number): Promise<void>;
   snapshot(want: SnapshotRequest): Promise<Snapshot>;
   sample(shots: number, seed: number): Promise<Map<number, number>>;
   dispose(): void;
@@ -183,6 +191,11 @@ class WholeStateBackend implements Backend {
 
   async measure(qubit: number): Promise<number> {
     return this.sim.measure(qubit);
+  }
+
+  async reset(seed: number): Promise<void> {
+    this.sim.reset();
+    this.sim.setSeed(seed);
   }
 
   async snapshot(want: SnapshotRequest): Promise<Snapshot> {

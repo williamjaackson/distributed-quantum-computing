@@ -628,6 +628,9 @@ select {
   font-size: 12px;
   font-variant-numeric: tabular-nums;
   text-align: right;
+  /* The label may wrap; the value must not. "8 of 8" broken across three lines
+     is not a number any more. */
+  white-space: nowrap;
 }
 
 .out-hint {
@@ -693,6 +696,27 @@ table.data tr:last-child td {
 
 table.data tr.is-peak td {
   background: var(--blue-100);
+}
+
+/* A bar behind the outcome label rather than beside it: the sidebar has no room
+   for a column of its own, and the label is the thing being measured. */
+.shot-bar {
+  position: absolute;
+  left: 0;
+  top: 2px;
+  bottom: 2px;
+  background: var(--blue-100);
+  border-radius: 2px;
+  z-index: 0;
+}
+
+table.data td:first-child {
+  position: relative;
+  isolation: isolate;
+}
+
+table.data td:first-child > span:not(.shot-bar) {
+  position: relative;
 }
 
 /* ---------- legends, notes ---------- */

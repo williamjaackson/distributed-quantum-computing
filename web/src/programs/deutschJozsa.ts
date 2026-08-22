@@ -82,7 +82,7 @@ export const deutschJozsa: Program = {
       for (let q = 0; q < n; q++) yield measure(q, `x${q}`, { stage: 'Measure' });
     }
   },
-  outputs: ({ nQubits, values, p1, probabilityOf, bits }) => {
+  outputs: ({ nQubits, values, p1, probabilityOf, bits, shots, measurement }) => {
     const n = nQubits - 1;
     const oracle = ORACLES[String(values.oracle)] ?? ORACLES.parity;
     // P(input register = 0…0), summed over both values of the output qubit.
@@ -92,9 +92,22 @@ export const deutschJozsa: Program = {
     void p1;
     const measured = Array.from({ length: n }, (_, q) => bits[`x${q}`]);
     const anyMeasured = measured.some((b) => b !== undefined);
-    const verdict = pZero > 0.5 ? 'constant' : 'balanced';
+    // The verdict is what the shots said, which is the point of the algorithm:
+    // one query per shot, and every shot reading zero means constant.
+    const mask = (1 << n) - 1;
+    const total = shots.reduce((a, o) => a + o.count, 0);
+    const zeros = shots.reduce((a, o) => a + ((o.index & mask) === 0 ? o.count : 0), 0);
+    const verdict = total > 0 ? (zeros === total ? 'constant' : 'balanced') : pZero > 0.5 ? 'constant' : 'balanced';
     const rows: Readout[] = [
-      { label: 'Verdict', value: verdict, hero: true, hint: 'from one oracle call' },
+      {
+        label: 'Verdict',
+        value: verdict,
+        hero: true,
+        hint:
+          total > 0
+            ? `${zeros.toLocaleString()} of ${measurement.taken.toLocaleString()} shots read |0…0⟩ — one oracle call each`
+            : 'from one oracle call',
+      },
       { label: 'Truth', value: oracle.kind, hint: oracle.label },
       { label: 'P(input reads 0…0)', value: `${(pZero * 100).toFixed(1)}%` },
     ];

@@ -103,7 +103,14 @@ export interface Readout {
   hero?: boolean;
 }
 
-/** What a program gets to inspect when producing its readouts. */
+/**
+ * What a program gets to inspect when producing its readouts.
+ *
+ * Always the *end* of the run, never the playhead. A readout is the answer, and
+ * an answer that changes as you scrub is not one — the views are what show the
+ * state mid-circuit. Everything here therefore describes the final state and
+ * the shots taken of it.
+ */
 export interface ReadoutContext {
   nQubits: number;
   /** 2^n. */
@@ -122,14 +129,22 @@ export interface ReadoutContext {
   /** P(qubit = 1) per qubit. Always available, whatever the register size. */
   p1: Float64Array;
   bits: Record<string, number>;
-  /** Basis index with the largest probability. */
+  /**
+   * Basis index with the largest probability.
+   *
+   * The *likeliest* outcome, which is not the same thing as the answer. A
+   * sampling algorithm's answer is the best thing it actually drew, so most
+   * programs should be reading [`shots`] instead.
+   */
   likeliest: number;
+  /** Measurement outcomes over the whole run, largest count first. */
+  shots: ShotOutcome[];
+  /** How the shots were obtained, and how many there really are. */
+  measurement: Measurement;
   /** Shannon entropy of the distribution in bits, when it could be computed. */
   entropyBits: number | null;
   /** Reads a set of qubits as a little-endian integer, from the joint distribution. */
   readRegister(qubits: number[]): { value: number; confidence: number };
-  /** True once every step has run. */
-  finished: boolean;
 }
 
 export interface Program {
@@ -159,6 +174,33 @@ export interface Program {
  * they are kilobytes. `amps` is the exception, filled in only while the whole
  * array is cheap enough to be worth having exactly.
  */
+/** One basis state and how often the run's shots landed on it. */
+export interface ShotOutcome {
+  index: number;
+  count: number;
+}
+
+/**
+ * What repeating the run produced.
+ *
+ * A quantum program's answer is not a number the state vector contains; it is
+ * what comes back when you measure, repeatedly. So every run is measured, and
+ * how those shots are obtained depends on whether the circuit itself measures:
+ *
+ * * `sampled` — no mid-circuit measurement, so every shot shares one final
+ *   state and the engine's sampler draws all of them from it at once. Exact.
+ * * `repeated` — the circuit measures, so each shot collapses differently and
+ *   the whole circuit is re-run per shot. This is the honest way and the
+ *   expensive one, so `taken` may fall short of `requested`.
+ */
+export interface Measurement {
+  requested: number;
+  taken: number;
+  method: 'sampled' | 'repeated';
+  /** Set when fewer shots were taken than asked for, saying why. */
+  note?: string;
+}
+
 export interface Frame {
   /** 0 is the initial state; frame `i` is the state after `steps[i - 1]`. */
   index: number;
@@ -179,7 +221,14 @@ export interface Frame {
 export interface Timeline {
   program: Program;
   values: InputValues;
-  seed: number;
+  /**
+   * Which shot the recorded frames are.
+   *
+   * Only meaningful for a circuit that measures: those collapse differently
+   * every run, so stepping through one of them means picking one. A unitary
+   * circuit is the same every time and this is always 0.
+   */
+  shotIndex: number;
   nQubits: number;
   amplitudeCount: number;
   wireLabels: string[];
@@ -201,6 +250,9 @@ export interface Timeline {
     /** Why links are absent: too costly to compute, or unavailable when sharded. */
     linksReason: 'cost' | 'sharded' | null;
   };
+  /** Measurement outcomes over the whole run, largest count first. */
+  shots: ShotOutcome[];
+  measurement: Measurement;
   /** Wall-clock milliseconds the engine spent executing the whole program. */
   elapsedMs: number;
   /** Set when the program stopped early — the timeline holds what ran. */

@@ -67,7 +67,7 @@ export const teleport: Program = {
       yield zg(2, { stage: 'Correct', conditional: 'm0 = 1', note: 'Undo the phase flip' });
     }
   },
-  outputs: ({ values, bits, p1, finished }) => {
+  outputs: ({ values, bits, p1, shots, measurement }) => {
     const theta = typeof values.theta === 'number' ? values.theta : 0;
     const wanted = Math.sin(theta / 2) ** 2;
     const got = p1[2];
@@ -88,11 +88,22 @@ export const teleport: Program = {
       const correction = [bits.m1 ? 'X' : null, bits.m0 ? 'Z' : null].filter(Boolean).join(' then ');
       rows.push({ label: 'Correction applied', value: correction || 'none needed' });
     }
-    if (finished) {
+    rows.push({
+      label: 'Error',
+      value: fixed(Math.abs(got - wanted), 6),
+      hint: 'difference from the prepared payload, this run',
+    });
+    // Across shots the corrections differ, and the payload has to arrive
+    // regardless — that is the claim, and one run cannot make it.
+    const total = shots.reduce((a, o) => a + o.count, 0);
+    if (total > 0) {
+      const ones = shots.reduce((a, o) => a + ((o.index >> 2) & 1 ? o.count : 0), 0);
       rows.push({
-        label: 'Error',
-        value: fixed(Math.abs(got - wanted), 6),
-        hint: 'difference from the prepared payload',
+        label: 'Bob measured 1',
+        value: `${((ones / total) * 100).toFixed(1)}%`,
+        hint: `over ${measurement.taken.toLocaleString()} shots, whichever corrections fired — the payload was ${(
+          wanted * 100
+        ).toFixed(1)}%`,
       });
     }
     return rows;

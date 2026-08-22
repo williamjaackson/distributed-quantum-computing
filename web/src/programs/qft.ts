@@ -59,7 +59,7 @@ export const qft: Program = {
       yield swap(i, n - 1 - i, { stage: 'Reverse', note: 'Undo the bit reversal' });
     }
   },
-  outputs: ({ nQubits, amplitudeCount, values, probabilities, entropyBits }) => {
+  outputs: ({ nQubits, amplitudeCount, values, probabilities, entropyBits, shots, measurement }) => {
     const k = (typeof values.input === 'number' ? values.input : 0) & ((1 << nQubits) - 1);
     const flat = 1 / amplitudeCount;
     let worst: number | null = null;
@@ -83,6 +83,11 @@ export const qft: Program = {
     if (entropyBits !== null) {
       rows.push({ label: 'Entropy', value: `${entropyBits.toFixed(2)} of ${nQubits} bits` });
     }
+    rows.push({
+      label: 'Outcomes measured',
+      value: `${shots.length} of ${amplitudeCount.toLocaleString()}`,
+      hint: `over ${measurement.taken.toLocaleString()} shots — a flat distribution hides the input completely`,
+    });
     return rows;
   },
 };

@@ -54,14 +54,16 @@ export const bell: Program = {
       yield measure(1, 'b', { stage: 'Measure', note: 'Bob measures — no surprises left' });
     }
   },
-  outputs: ({ values, bits, probabilityOf }) => {
+  outputs: ({ values, bits, probabilityOf, shots, measurement }) => {
     const variant = VARIANTS[String(values.variant)] ?? VARIANTS['phi+'];
     const agree = probabilityOf(0) + probabilityOf(3);
     const rows: Readout[] = [{ label: 'Bell state', value: variant.ket, hero: true }];
+    const total = shots.reduce((a, o) => a + o.count, 0);
+    const agreed = shots.reduce((a, o) => a + (o.index === 0 || o.index === 3 ? o.count : 0), 0);
     rows.push({
-      label: 'Outcomes agree',
-      value: `${(agree * 100).toFixed(1)}%`,
-      hint: 'P(|00⟩) + P(|11⟩)',
+      label: 'Outcomes agreed',
+      value: total > 0 ? `${agreed.toLocaleString()} of ${total.toLocaleString()} shots` : '—',
+      hint: `${(agree * 100).toFixed(1)}% exactly — over ${measurement.taken.toLocaleString()} measurements`,
     });
     if (bits.a !== undefined) {
       rows.push({ label: 'Alice measured', value: `${bits.a}` });

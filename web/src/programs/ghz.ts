@@ -44,7 +44,7 @@ export const ghz: Program = {
       });
     }
   },
-  outputs: ({ nQubits, amplitudeCount, probabilityOf, bits }) => {
+  outputs: ({ nQubits, amplitudeCount, probabilityOf, bits, shots, measurement }) => {
     const all1 = amplitudeCount - 1;
     const rows: Readout[] = [
       {
@@ -53,9 +53,17 @@ export const ghz: Program = {
         hero: true,
       },
       {
-        label: 'All agree',
-        value: `${((probabilityOf(0) + probabilityOf(all1)) * 100).toFixed(1)}%`,
-        hint: 'P(|0…0⟩) + P(|1…1⟩)',
+        label: 'All agreed',
+        value:
+          shots.length === 0
+            ? '—'
+            : `${shots
+                .filter((o) => o.index === 0 || o.index === all1)
+                .reduce((a, o) => a + o.count, 0)
+                .toLocaleString()} of ${measurement.taken.toLocaleString()} shots`,
+        hint: `${((probabilityOf(0) + probabilityOf(all1)) * 100).toFixed(1)}% exactly; ${
+          shots.length
+        } distinct outcome${shots.length === 1 ? '' : 's'} out of ${amplitudeCount.toLocaleString()}`,
       },
     ];
     if (bits.c0 !== undefined) {

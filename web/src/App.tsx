@@ -20,6 +20,7 @@ import { PROGRAMS, programById } from './programs';
 import { VIEWS, viewById } from './views';
 import { InputsPanel } from './components/InputsPanel';
 import { OutputsPanel } from './components/OutputsPanel';
+import { MeasurementPanel } from './components/MeasurementPanel';
 import { Transport } from './components/Transport';
 import { ExecutionPanel } from './components/ExecutionPanel';
 
@@ -29,7 +30,8 @@ export function App() {
   const [programId, setProgramId] = useState(PROGRAMS[0].id);
   const [valuesById, setValuesById] = useState<Record<string, InputValues>>({});
   const [viewId, setViewId] = useState('qubits');
-  const [seed, setSeed] = useState(0x5eed);
+  const [shots, setShots] = useState(1024);
+  const [shotIndex, setShotIndex] = useState(0);
   const [execution, setExecution] = useState<Execution>('auto');
   const [unlocked, setUnlocked] = useState(false);
   const [timeline, setTimeline] = useState<Timeline | null>(null);
@@ -75,10 +77,12 @@ export function App() {
     const mine = ++generation.current;
     setProgress(0);
     let abandoned = false;
-    void runProgram(program, values, seed, {
+    void runProgram(program, values, {
       execution,
       unlocked,
-      onProgress: (done) => {
+      shots,
+      shotIndex,
+      onProgress: (done: number) => {
         if (generation.current === mine) setProgress(done);
       },
       cancelled: () => abandoned || generation.current !== mine,
@@ -90,7 +94,7 @@ export function App() {
     return () => {
       abandoned = true;
     };
-  }, [ready, program, values, seed, execution, unlocked]);
+  }, [ready, program, values, shots, shotIndex, execution, unlocked]);
 
   const player = usePlayer(timeline?.frames.length ?? 1);
 
@@ -99,6 +103,7 @@ export function App() {
   const resetPlayhead = player.reset;
   useEffect(() => {
     resetPlayhead();
+    setShotIndex(0);
   }, [programId, resetPlayhead]);
 
   useEffect(() => {
@@ -137,8 +142,21 @@ export function App() {
     [timeline, frame],
   );
 
+  // The readouts describe the *end* of the run, not the playhead. An answer that
+  // changes as you scrub is not an answer; the views are what show the state
+  // mid-circuit.
+  const finalFrame = timeline?.frames[timeline.frames.length - 1] ?? null;
+  const finalAnalysis = useMemo(
+    () =>
+      timeline && finalFrame
+        ? analyse(finalFrame, timeline.nQubits, timeline.amplitudeCount)
+        : null,
+    [timeline, finalFrame],
+  );
+
   const readouts: Readout[] = useMemo(() => {
-    if (!timeline || !analysis || !program.outputs) return [];
+    if (!timeline || !finalAnalysis || !finalFrame || !program.outputs) return [];
+    const analysis = finalAnalysis;
     const byIndex = new Map(analysis.support.map((e) => [e.index, e.prob]));
     const ctx: ReadoutContext = {
       nQubits: timeline.nQubits,
@@ -147,10 +165,11 @@ export function App() {
       probabilityOf: (i) => analysis.probs?.[i] ?? byIndex.get(i) ?? 0,
       probabilities: analysis.probs,
       p1: Float64Array.from(analysis.qubits, (q) => q.p1),
-      bits: frame?.bits ?? {},
+      bits: finalFrame.bits,
       likeliest: analysis.likeliest,
+      shots: timeline.shots,
+      measurement: timeline.measurement,
       entropyBits: analysis.entropyBits,
-      finished: frameIndex >= timeline.steps.length,
       readRegister: (qubits) => readRegister(analysis, qubits),
     };
     try {
@@ -160,7 +179,7 @@ export function App() {
       // page down.
       return [];
     }
-  }, [timeline, analysis, program, frame, frameIndex]);
+  }, [timeline, finalAnalysis, finalFrame, program]);
 
   const view = viewById(viewId);
   const currentStep =
@@ -228,29 +247,46 @@ export function App() {
               qubitCeiling={ceiling(execution, unlocked, limits)}
               onChange={setValue}
             />
-            <div className="field">
-              <div className="field-head">
-                <span className="field-label">Measurement seed</span>
-                <span className="field-value">{seed}</span>
+            {timeline?.measurement.method === 'repeated' && (
+              <div className="field">
+                <div className="field-head">
+                  <span className="field-label">Watching shot</span>
+                  <span className="field-value">
+                    {shotIndex + 1} of {timeline.measurement.taken.toLocaleString()}
+                  </span>
+                </div>
+                <div className="stepper">
+                  <button
+                    className="btn"
+                    onClick={() => setShotIndex((i) => Math.max(0, i - 1))}
+                    disabled={shotIndex === 0}
+                    aria-label="Previous shot"
+                  >
+                    −
+                  </button>
+                  <button
+                    className="btn"
+                    onClick={() =>
+                      setShotIndex((i) => Math.min(timeline.measurement.taken - 1, i + 1))
+                    }
+                    disabled={shotIndex >= timeline.measurement.taken - 1}
+                    aria-label="Next shot"
+                  >
+                    +
+                  </button>
+                  <span className="field-hint">
+                    this circuit measures, so each run collapses differently — the frames are one of
+                    them
+                  </span>
+                </div>
               </div>
-              <div className="stepper">
-                <button className="btn" onClick={() => setSeed((s) => (s + 1) & 0xffff)}>
-                  Next seed
-                </button>
-                <span className="field-hint">re-rolls every measurement in the run</span>
-              </div>
-            </div>
+            )}
           </section>
 
           <section className="card" id="outputs">
             <h2 className="card-title">Outputs</h2>
             {timeline && frame ? (
-              <OutputsPanel
-                readouts={readouts}
-                bits={frame.bits}
-                norm={frame.norm}
-                finished={frameIndex >= timeline.steps.length}
-              />
+              <OutputsPanel readouts={readouts} bits={finalFrame?.bits ?? {}} norm={frame.norm} />
             ) : (
               <p className="field-hint">starting the engine…</p>
             )}
@@ -260,6 +296,15 @@ export function App() {
               </p>
             )}
           </section>
+
+          {timeline && finalAnalysis && (
+            <MeasurementPanel
+              timeline={timeline}
+              analysis={finalAnalysis}
+              shots={shots}
+              onShots={setShots}
+            />
+          )}
 
           <ExecutionPanel
             execution={execution}

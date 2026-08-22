@@ -2,13 +2,16 @@
  * The view registry. One projection at a time — they are different ways of
  * looking at the same amplitudes, and side by side they compete rather than
  * combine.
+ *
+ * There is no shots view. Measurement is not another way of looking at the
+ * state, it is what turns a state into an answer, so it belongs to the run
+ * rather than to one projection of it — see `MeasurementPanel`.
  */
 import { CircuitView } from './CircuitView';
 import { StateVectorView } from './StateVectorView';
 import { QubitMapView } from './QubitMapView';
 import { PolarisationView } from './PolarisationView';
 import { ComplexPlaneView } from './ComplexPlaneView';
-import { ShotsView } from './ShotsView';
 import type { ViewDef } from './types';
 
 export const VIEWS: ViewDef[] = [
@@ -41,12 +44,6 @@ export const VIEWS: ViewDef[] = [
     name: 'Complex plane',
     subtitle: 'amplitudes as points — phase is the angle, exactly',
     Component: ComplexPlaneView,
-  },
-  {
-    id: 'shots',
-    name: 'Shots',
-    subtitle: 'what repeated measurement would actually return',
-    Component: ShotsView,
   },
 ];
 

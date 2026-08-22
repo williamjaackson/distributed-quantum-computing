@@ -41,10 +41,18 @@ export const interference: Program = {
     yield h(0, { stage: 'Recombine', note: 'Recombine the paths — they interfere' });
     if (bool(v, 'measure')) yield measure(0, 'c0', { stage: 'Measure' });
   },
-  outputs: ({ p1, values, bits }) => {
+  outputs: ({ p1, values, bits, shots, measurement }) => {
     const phi = typeof values.phi === 'number' ? values.phi : 0;
+    const total = shots.reduce((a, o) => a + o.count, 0);
+    const ones = shots.find((o) => o.index === 1)?.count ?? 0;
     const rows: Readout[] = [
-      { label: 'P(1)', value: `${(p1[0] * 100).toFixed(2)}%`, hero: true },
+      {
+        label: 'Measured 1',
+        value: total > 0 ? `${((ones / total) * 100).toFixed(2)}%` : '—',
+        hero: true,
+        hint: `${ones.toLocaleString()} of ${measurement.taken.toLocaleString()} shots`,
+      },
+      { label: 'P(1), exactly', value: `${(p1[0] * 100).toFixed(2)}%` },
       { label: 'Predicted sin²(φ/2)', value: `${(Math.sin(phi / 2) ** 2 * 100).toFixed(2)}%` },
     ];
     if (bits.c0 !== undefined) rows.push({ label: 'Measured', value: `|${bits.c0}⟩` });

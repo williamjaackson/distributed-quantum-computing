@@ -118,28 +118,31 @@ export const grover: Program = {
       for (let q = 0; q < n; q++) yield measure(q, `c${q}`, { stage: 'Measure' });
     }
   },
-  outputs: ({ nQubits, amplitudeCount, values, probabilityOf, likeliest }) => {
+  outputs: ({ nQubits, amplitudeCount, values, probabilityOf, shots, measurement }) => {
     const marked = (typeof values.marked === 'number' ? values.marked : 0) & (amplitudeCount - 1);
     let bitstring = '';
     for (let q = nQubits - 1; q >= 0; q--) bitstring += (marked >> q) & 1;
     const flat = 1 / amplitudeCount;
     const optimal = optimalRounds(nQubits);
+    const total = shots.reduce((a, o) => a + o.count, 0) || 1;
+    const hits = shots.find((o) => o.index === marked)?.count ?? 0;
     const rows: Readout[] = [
       {
-        label: 'P(marked)',
-        value: `${(probabilityOf(marked) * 100).toFixed(1)}%`,
+        label: 'Measured the marked state',
+        value: `${hits.toLocaleString()} of ${measurement.taken.toLocaleString()} shots`,
         hero: true,
-        hint: `was ${(flat * 100).toFixed(2)}% before amplification — ${(
-          probabilityOf(marked) / flat
-        ).toFixed(0)}× that`,
+        hint: `${((hits / total) * 100).toFixed(1)}% — searching at random would give ${(
+          flat * 100
+        ).toFixed(2)}%`,
       },
       {
         label: 'Looking for',
         value: `|${bitstring}⟩ = ${marked} of ${amplitudeCount.toLocaleString()}`,
       },
       {
-        label: 'Likeliest state',
-        value: likeliest === marked ? 'the marked one' : `${likeliest} — not the marked one`,
+        label: 'P(marked), exactly',
+        value: `${(probabilityOf(marked) * 100).toFixed(1)}%`,
+        hint: `${(probabilityOf(marked) / flat).toFixed(0)}× the even draw it started from`,
       },
       {
         label: 'Optimal rounds',

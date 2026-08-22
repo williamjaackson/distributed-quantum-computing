@@ -163,6 +163,13 @@ export class ShardedRegister implements Backend {
     this.freeRng();
   }
 
+  /** Every slice back to the ground state, and a fresh draw sequence. */
+  async reset(seed: number): Promise<void> {
+    await Promise.all(this.handles.map((h) => h.send({ kind: 'reset' })));
+    this.rng.free();
+    this.rng = new Prng(seed);
+  }
+
   // -------------------------------------------------------------------------
   // Gates
   // -------------------------------------------------------------------------

@@ -129,16 +129,28 @@ export const adder: Program = {
       yield measure(carryOut, `s${n}`, { stage: 'Read out' });
     }
   },
-  outputs: ({ values, readRegister, finished }) => {
+  outputs: ({ values, readRegister, shots, measurement }) => {
     const n = typeof values.width === 'number' ? values.width : 2;
     const { a, b, carryOut } = layout(n);
     const mask = (1 << n) - 1;
     const av = (typeof values.a === 'number' ? values.a : 0) & mask;
     const bv = (typeof values.b === 'number' ? values.b : 0) & mask;
     const superpose = values.superpose === true;
-    const sum = readRegister([...b, carryOut]);
     const restored = readRegister(a);
     const rows: Readout[] = [];
+
+    /** The sum register's value in one measured outcome. */
+    const sumOf = (state: number) => {
+      let v = 0;
+      b.forEach((q, i) => (v |= ((state >> q) & 1) << i));
+      return v | (((state >> carryOut) & 1) << n);
+    };
+    const bySum = new Map<number, number>();
+    for (const o of shots) {
+      const key = sumOf(o.index);
+      bySum.set(key, (bySum.get(key) ?? 0) + o.count);
+    }
+    const total = [...bySum.values()].reduce((x, y) => x + y, 0) || 1;
 
     if (superpose) {
       rows.push({
@@ -148,20 +160,28 @@ export const adder: Program = {
         hint: `every A added to B = ${bv}, in one pass over ${mask + 1} values`,
       });
       rows.push({
-        label: 'Likeliest branch',
-        value: `${sum.value}`,
-        hint: `${(sum.confidence * 100).toFixed(1)}% of the probability`,
+        label: 'Sums actually drawn',
+        value: [...bySum.keys()].sort((x, y) => x - y).join(', '),
+        hint: `over ${total.toLocaleString()} shots — one measurement collapses to one of them`,
       });
     } else {
+      const drawn = [...bySum].sort((x, y) => y[1] - x[1])[0];
       rows.push({
         label: `${av} + ${bv}`,
-        value: finished ? `${sum.value}` : '…',
+        value: drawn ? `${drawn[0]}` : '—',
         hero: true,
         hint:
-          finished && sum.value !== av + bv
+          drawn && drawn[0] !== av + bv
             ? `expected ${av + bv}`
-            : `read from sum${n}…sum0, ${(sum.confidence * 100).toFixed(1)}% confident`,
+            : `all ${measurement.taken.toLocaleString()} shots read sum${n}…sum0 the same way`,
       });
+      if (bySum.size > 1) {
+        rows.push({
+          label: 'Disagreeing shots',
+          value: `${bySum.size} different sums`,
+          hint: 'reversible arithmetic on definite inputs should give exactly one answer',
+        });
+      }
     }
     rows.push({
       label: 'A afterwards',
