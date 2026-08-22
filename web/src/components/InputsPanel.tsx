@@ -82,9 +82,11 @@ function Field({
       return (
         <div className="field">
           <div className="field-head">
-            <span className="field-label">{spec.label}</span>
+            <span className="field-label" id={`label-${spec.id}`}>
+              {spec.label}
+            </span>
           </div>
-          <div className="stepper">
+          <div className="stepper" role="group" aria-labelledby={`label-${spec.id}`}>
             <button
               className="btn"
               onClick={() => onChange(spec.id, Math.max(spec.min, value - 1))}
@@ -120,9 +122,16 @@ function Field({
       return (
         <div className="field">
           <div className="field-head">
-            <span className="field-label">{spec.label}</span>
+            <label className="field-label" htmlFor={`input-${spec.id}`}>
+              {spec.label}
+            </label>
           </div>
-          <select value={value} onChange={(e) => onChange(spec.id, e.target.value)}>
+          <select
+            id={`input-${spec.id}`}
+            aria-label={spec.label}
+            value={value}
+            onChange={(e) => onChange(spec.id, e.target.value)}
+          >
             {spec.options.map((o) => (
               <option key={o.value} value={o.value}>
                 {o.label}

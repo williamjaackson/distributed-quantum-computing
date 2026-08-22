@@ -60,24 +60,31 @@ export interface Analysis {
 /** Below this a probability is treated as absent — it is rounding, not physics. */
 export const EPS = 1e-12;
 
+function entry(index: number, re: number, im: number): BasisEntry {
+  const prob = re * re + im * im;
+  return { index, re, im, prob, mag: Math.sqrt(prob), phase: Math.atan2(im, re) };
+}
+
 export function analyse(frame: Frame, nQubits: number, amplitudeCount: number): Analysis {
+  // With the whole array in hand there is no reason to look at a truncated
+  // top-k: every occupied state is right there. The top-k is what a register
+  // too large to hold leaves behind, and only then.
   const support: BasisEntry[] = [];
-  for (let i = 0; i + 2 < frame.top.length; i += 3) {
-    const re = frame.top[i + 1];
-    const im = frame.top[i + 2];
-    const prob = re * re + im * im;
-    if (prob <= EPS) continue;
-    support.push({
-      index: frame.top[i],
-      re,
-      im,
-      prob,
-      mag: Math.sqrt(prob),
-      phase: Math.atan2(im, re),
-    });
+  let truncated = frame.topTruncated;
+  if (frame.amps) {
+    truncated = false;
+    for (let i = 0; i * 2 + 1 < frame.amps.length; i++) {
+      const e = entry(i, frame.amps[2 * i], frame.amps[2 * i + 1]);
+      if (e.prob > EPS) support.push(e);
+    }
+  } else {
+    for (let i = 0; i + 2 < frame.top.length; i += 3) {
+      const e = entry(frame.top[i], frame.top[i + 1], frame.top[i + 2]);
+      if (e.prob > EPS) support.push(e);
+    }
   }
-  // The engine returns these already ordered; sorting again costs nothing at
-  // this length and means a backend that merges shard lists cannot get it wrong.
+  // Largest first. The engine already orders its top-k, but a backend that
+  // merges shard lists could get it wrong, and sorting is free at this length.
   support.sort((a, b) => b.prob - a.prob || a.index - b.index);
 
   const probs = frame.amps ? probabilities(frame.amps) : null;
@@ -92,7 +99,7 @@ export function analyse(frame: Frame, nQubits: number, amplitudeCount: number): 
     amplitudeCount,
     qubits: readBloch(frame.bloch, nQubits),
     support,
-    supportTruncated: frame.topTruncated,
+    supportTruncated: truncated,
     likeliest: support.length > 0 ? support[0].index : 0,
     probs,
     links: frame.links,

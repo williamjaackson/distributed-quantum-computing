@@ -7,9 +7,12 @@
  * survives being printed in greyscale.
  *
  * Bars are placed at their basis index on a linear axis, so the picture stays
- * the same shape as the register grows: at 4096 amplitudes the marks are
- * hairlines and the shape of the distribution is still the thing you see.
+ * the same shape as the register grows. Past one mark per pixel the marks are
+ * binned by column and each one is the largest amplitude in its column — a
+ * spectrum rather than a bar per state, which is the only honest way to draw
+ * more states than there are pixels. The note says when that is happening.
  */
+import type { BasisEntry } from '../lib/analysis';
 import { bitString, bytes, complex, fixed, ket, pct } from '../lib/format';
 import { useMeasure } from '../lib/useMeasure';
 import { useTip } from '../components/Tooltip';
@@ -43,6 +46,10 @@ export function StateVectorView({ analysis }: ViewProps) {
 
   const x = (i: number) => MARGIN.left + (i + 0.5) * slot;
   const y = (p: number) => MARGIN.top + PLOT_H * (1 - p / domain);
+
+  // One mark per pixel column at most, carrying the largest amplitude in it.
+  const binned = support.length > plotW;
+  const marks = binned ? binByColumn(support, count, plotW) : support;
 
   const significant = support.filter((e) => e.prob > 0.002).slice(0, 64);
   const sortedByIndex = [...significant].sort((a, b) => a.index - b.index);
@@ -92,7 +99,7 @@ export function StateVectorView({ analysis }: ViewProps) {
 
         {/* Bars: probability of each basis state. Rounded at the data end,
             square at the baseline. */}
-        {support.map((e) => {
+        {marks.map((e) => {
           const h = PLOT_H * (e.prob / domain);
           if (h < 0.4) return null;
           return (
@@ -162,7 +169,11 @@ export function StateVectorView({ analysis }: ViewProps) {
       <p className="note">
         {supportTruncated
           ? `The ${support.length} largest of ${count.toLocaleString()} basis states — the rest are below the recorded floor.`
-          : `${support.length} of ${count.toLocaleString()} basis states carry any amplitude.`}
+          : `${support.length.toLocaleString()} of ${count.toLocaleString()} basis states carry any amplitude.`}
+        {binned &&
+          ` More states than pixels, so each mark is the largest of the ${Math.ceil(
+            support.length / marks.length,
+          )} or so sharing its column.`}
         {!showDials && support.length > 0 && ' Phases are too dense to dial here — see the table.'}
         {significant.length < support.length &&
           showDials &&
@@ -227,4 +238,22 @@ function bar(x0: number, w: number, top: number, base: number): string {
     `M${x0},${base} V${top + r} Q${x0},${top} ${x0 + r},${top} ` +
     `H${x1 - r} Q${x1},${top} ${x1},${top + r} V${base} Z`
   );
+}
+
+/**
+ * Collapse the support to one entry per pixel column, keeping the largest.
+ *
+ * Keeping the largest rather than averaging is deliberate: the question a state
+ * vector answers is "where is the probability", and a peak one state wide must
+ * not be averaged away by its empty neighbours.
+ */
+function binByColumn(support: BasisEntry[], count: number, plotW: number): BasisEntry[] {
+  const columns = Math.max(1, Math.floor(plotW));
+  const best = new Map<number, BasisEntry>();
+  for (const e of support) {
+    const column = Math.floor((e.index / count) * columns);
+    const current = best.get(column);
+    if (!current || e.prob > current.prob) best.set(column, e);
+  }
+  return [...best.values()];
 }
