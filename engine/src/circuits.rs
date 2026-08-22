@@ -187,6 +187,23 @@ pub fn modexp_oracle(
     modulus: u64,
     work_qubits: u32,
 ) -> Result<(), QsimError> {
+    modexp_oracle_from(sv, a, modulus, work_qubits, 1)
+}
+
+/// [`modexp_oracle`], but starting from an arbitrary power of `a`.
+///
+/// This is what makes the oracle shard-local. The counting register occupies the
+/// high index bits, so a shard id *is* the top of `x`, and
+/// `a^x = a^(offset) * a^(x_low)` splits cleanly: each shard needs only the power
+/// of `a` at its first `x`, which is classical arithmetic. No shard ever needs
+/// another shard's amplitudes, so the whole oracle costs zero communication.
+pub fn modexp_oracle_from(
+    sv: &mut StateVector,
+    a: u64,
+    modulus: u64,
+    work_qubits: u32,
+    start_power: u64,
+) -> Result<(), QsimError> {
     if modulus < 2 {
         return Err(QsimError::InvalidOracle(format!("modulus {modulus} must be at least 2")));
     }
@@ -218,8 +235,9 @@ pub fn modexp_oracle(
         .map_err(|_| QsimError::OutOfMemory { requested: work_qubits, bytes: (m as u64) * 16 })?;
     scratch.resize(m, C::ZERO);
 
-    // c tracks a^x mod N incrementally across blocks.
-    let mut c: u64 = 1 % modulus;
+    // c tracks a^x mod N incrementally across blocks, seeded at this slice's
+    // first x rather than always at x = 0.
+    let mut c: u64 = start_power % modulus;
     let a_mod = a % modulus;
     for x in 0..blocks {
         let base = x * block;

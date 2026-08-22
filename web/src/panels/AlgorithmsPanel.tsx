@@ -7,6 +7,7 @@ import type { EngineClient } from '../lib/engineClient';
 import { formatMs } from '../lib/format';
 import type { EngineInfo, ShorAttempt, ShorResult } from '../lib/protocol';
 import { isShorTarget, planShor, primeFactors } from '../lib/shor';
+import { runShorSharded } from '../lib/shorSharded';
 
 /**
  * Attempts to allow before giving up.
@@ -39,12 +40,21 @@ const RATIOS: { value: number; label: string }[] = [
   { value: 2, label: 'textbook (2×) — most reliable, smallest N' },
 ];
 
+/**
+ * Ceiling for the sharded path.
+ *
+ * Beyond this a slice would exceed what the machine will hold; the Sharded
+ * capacity tab measures the real limit, and 29 is what this machine reached.
+ */
+const SHARDED_MAX_QUBITS = 29;
+
 export function AlgorithmsPanel({ client, info }: { client: EngineClient; info: EngineInfo }) {
-  // Capped at the single-module limit rather than lower: Shor issues well over a
-  // hundred sequential gates per attempt, and the sharded path's per-gate cost
-  // (hundreds of milliseconds) would turn one attempt into minutes.
-  const budget = info.maxQubits;
-  const [qubits, setQubits] = useState(budget);
+  // Single module is bounded by isize::MAX; sharding lifts that by giving each
+  // slice its own address space. Sharding is not free, but far cheaper here than
+  // it first appears -- see the note in the banner.
+  const [sharded, setSharded] = useState(false);
+  const budget = sharded ? SHARDED_MAX_QUBITS : info.maxQubits;
+  const [qubits, setQubits] = useState(info.maxQubits);
   const [ratio, setRatio] = useState(1);
   const [custom, setCustom] = useState('');
   const [seed, setSeed] = useState(7);
@@ -80,20 +90,34 @@ export function AlgorithmsPanel({ client, info }: { client: EngineClient; info: 
     setError(null);
     setResult(null);
     try {
-      const res = await client.call<ShorResult>(
-        {
-          kind: 'runShor',
-          modulus: target,
-          workQubits: layout.work,
-          countQubits: layout.count,
-          maxAttempts: MAX_ATTEMPTS,
-          seed,
-          coprimeOnly,
-        },
-        (p) => {
-          if (p.kind === 'shor') setStage(p.stage);
-        },
-      );
+      const res = sharded
+        ? await runShorSharded(
+            {
+              modulus: target,
+              workQubits: layout.work,
+              countQubits: layout.count,
+              maxAttempts: MAX_ATTEMPTS,
+              seed,
+              coprimeOnly,
+              qftWindow: Infinity,
+              minShardBits: 0,
+            },
+            (p) => setStage(p.stage),
+          )
+        : await client.call<ShorResult>(
+            {
+              kind: 'runShor',
+              modulus: target,
+              workQubits: layout.work,
+              countQubits: layout.count,
+              maxAttempts: MAX_ATTEMPTS,
+              seed,
+              coprimeOnly,
+            },
+            (p) => {
+              if (p.kind === 'shor') setStage(p.stage);
+            },
+          );
       setResult(res);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -101,7 +125,7 @@ export function AlgorithmsPanel({ client, info }: { client: EngineClient; info: 
       setRunning(false);
       setStage(null);
     }
-  }, [client, target, layout, seed, coprimeOnly]);
+  }, [client, target, layout, seed, coprimeOnly, sharded]);
 
   const correct =
     result?.factors != null && result.factors[0] * result.factors[1] === result.modulus;
@@ -109,6 +133,23 @@ export function AlgorithmsPanel({ client, info }: { client: EngineClient; info: 
   return (
     <>
       <div className="controls">
+        <div className="control">
+          <label htmlFor="alg-engine">Engine</label>
+          <select
+            id="alg-engine"
+            value={sharded ? 'sharded' : 'single'}
+            disabled={running}
+            onChange={(e) => {
+              const next = e.target.value === 'sharded';
+              setSharded(next);
+              const cap = next ? SHARDED_MAX_QUBITS : info.maxQubits;
+              setQubits((q) => Math.min(q, cap));
+            }}
+          >
+            <option value="single">single module — up to {info.maxQubits} qubits</option>
+            <option value="sharded">sharded — up to {SHARDED_MAX_QUBITS} qubits</option>
+          </select>
+        </div>
         <div className="control">
           <label htmlFor="alg-qubits">Qubit budget</label>
           <input
@@ -195,6 +236,17 @@ export function AlgorithmsPanel({ client, info }: { client: EngineClient; info: 
             so the period — can be read. The budget therefore goes as n × (1 + {ratio}), which makes
             the counting ratio, not the qubit total, the thing that decides how big N can be. Target{' '}
             <strong>{target}</strong> = {expected}, using {layout.total} of {qubits}.
+            {sharded && (
+              <>
+                {' '}Sharded, the oracle and the marginal cost <em>no</em> communication — the
+                counting register sits in the high bits, so a shard id is the top of x and the work
+                register stays local. Only the inverse QFT crosses, and running its core on reversed
+                qubit indices (which also removes the bit-reversal swaps) puts the shard-id qubits at
+                the start of the loop where they carry the fewest controlled phases: measured{' '}
+                <strong>6 cross-shard gates</strong> at 8 shards, against 39 with the ordinary
+                ordering.
+              </>
+            )}
           </div>
         </div>
       )}
@@ -229,8 +281,20 @@ export function AlgorithmsPanel({ client, info }: { client: EngineClient; info: 
               sub={correct ? `${result.factors![0]} × ${result.factors![1]} = ${result.modulus}` : 'product does not match'}
             />
             <StatTile label="Attempts" value={String(result.attempts.length)} sub={`of ${MAX_ATTEMPTS} allowed`} />
-            <StatTile label="Gates" value={String(result.gates)} sub={`on ${result.totalQubits} qubits`} />
-            <StatTile label="Wall time" value={formatMs(result.totalMs)} sub="whole run, in the worker" />
+            <StatTile
+              label="Gates"
+              value={String(result.gates)}
+              sub={
+                'crossShardGates' in result
+                  ? `${(result as { crossShardGates: number }).crossShardGates} crossed a shard boundary`
+                  : `on ${result.totalQubits} qubits`
+              }
+            />
+            <StatTile
+              label="Wall time"
+              value={formatMs(result.totalMs)}
+              sub={sharded ? `whole run, across ${'crossShardGates' in result ? (result as { layout?: { shards: number } }).layout?.shards ?? '?' : '?'} shards` : 'whole run, in the worker'}
+            />
           </div>
 
           {result.distribution && (

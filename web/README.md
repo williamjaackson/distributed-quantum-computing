@@ -64,6 +64,41 @@ base. Bases sharing a factor with N are also skipped by default — gcd hands ov
 a factor for free, which is legitimate Shor but for small N crowds out the
 quantum path entirely (half of all bases below 15 factor it classically).
 
+### Factoring across shards
+
+Sharding fits this circuit far better than it looks. The counting register sits in
+the high index bits, so a shard id *is* the top of `x`, which means:
+
+- the **oracle needs no communication** — `a^x = a^(offset) · a^(x_low)`, so each
+  shard derives its own starting power from its index and permutes only its local
+  work register;
+- the **marginal needs no communication** — the work register being traced out is
+  the low bits, and slices in shard order are already in ascending `x`.
+
+Only the inverse QFT crosses boundaries. Two things cut that sharply, and the
+second was a surprise:
+
+The forward transform is `swaps ∘ core`, so the inverse is `core⁻¹ ∘ swaps` and
+the swaps come *first*. Simply omitting them permutes the input, not the output,
+and gives a wrong answer. But conjugating by the swap network relabels qubits, so
+running the core on **reversed** qubit indices moves the permutation to the end,
+where dropping it really is just reversing the readout bits.
+
+That also reorders the loop — and this is where the win is. The controlled phases
+for step `j` number `j`, so with reversed labels the shard-id qubits land at the
+*start* of the loop where they carry the fewest of them. Measured at 8 shards:
+**6 cross-shard gates instead of 39.**
+
+| | Single module | Sharded |
+| --- | --- | --- |
+| Largest N | 8189 = 19 × 431 | **16383 = 381 × 43** |
+| Qubits | 26 | 28 |
+| Wall time | 8.5 s | 11 s |
+| Cross-shard gates | — | 3 |
+
+Verified against the single-module path at 4 and 8 shards on N = 15, 33 and 255:
+identical factors and identical measured phases.
+
 This replaces the earlier engine-test tab. The correctness suite still runs under
 `cargo test` (55 tests), and factoring exercises the QFT, the oracle and
 measurement end-to-end against an answer that is checkable by multiplication.

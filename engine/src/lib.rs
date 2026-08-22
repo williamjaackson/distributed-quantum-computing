@@ -520,6 +520,23 @@ impl JsShard {
         self.inner.scale(factor);
     }
 
+    /// Modular-exponentiation oracle over this slice alone — no communication.
+    #[wasm_bindgen(js_name = modexpLocal)]
+    pub fn modexp_local(&mut self, a: f64, modulus: f64, work_qubits: u32) -> Result<(), JsValue> {
+        self.inner
+            .modexp_oracle_local(a as u64, modulus as u64, work_qubits)
+            .map_err(js_err)
+    }
+
+    /// This slice's share of the counting register's distribution.
+    ///
+    /// Concatenating these in shard order gives the global marginal, because a
+    /// shard id is the top of the counting register.
+    #[wasm_bindgen(js_name = registerMarginal)]
+    pub fn shard_register_marginal(&self, low_qubits: u32) -> Result<Vec<f64>, JsValue> {
+        self.inner.register_marginal(low_qubits).map_err(js_err)
+    }
+
     /// This slice's share of the total probability; sum across shards for the norm.
     #[wasm_bindgen(js_name = probabilityMass)]
     pub fn probability_mass(&self) -> f64 {

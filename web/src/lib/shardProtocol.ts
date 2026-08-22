@@ -30,6 +30,10 @@ export type ShardReq =
   | { id: number; kind: 'fillRandom'; seed: number }
   /** Normalise after a distributed fill. */
   | { id: number; kind: 'scale'; factor: number }
+  /** Modular-exponentiation oracle over this slice alone; no communication. */
+  | { id: number; kind: 'modexpLocal'; a: number; modulus: number; workQubits: number }
+  /** This slice's share of the counting-register distribution. */
+  | { id: number; kind: 'registerMarginal'; lowQubits: number }
   | { id: number; kind: 'mass' }
   | { id: number; kind: 'localProbabilityOfOne'; qubit: number }
   | { id: number; kind: 'probabilities' }
