@@ -1,0 +1,5 @@
+# Raise the WASM memory ceiling from the 2 GiB default to the wasm32 maximum of
+# 4 GiB (65536 pages). Without this the capacity probe tops out around 25 qubits
+# on a machine that could reach 26-27.
+[target.wasm32-unknown-unknown]
+rustflags = ["-C", "link-arg=--max-memory=4294967296"]
