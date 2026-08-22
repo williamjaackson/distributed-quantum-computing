@@ -519,6 +519,23 @@ fn memory_requirement_matches_the_16_bytes_per_amplitude_model() {
     assert_eq!(qsim::state::memory_bytes_required(27), 2 * 1024 * 1024 * 1024);
 }
 
+/// `isize::MAX` on a 32-bit target — the largest single allocation Rust permits.
+const WASM32_ISIZE_MAX: u64 = (1u64 << 31) - 1;
+
+#[test]
+fn max_qubits_is_set_by_the_single_allocation_limit_not_the_address_space() {
+    // Documented so the constant cannot drift back to 27. The binding limit on
+    // wasm32 is isize::MAX, not the 4 GiB address space: 27 qubits needs exactly
+    // 2^31 bytes, one byte too many, and is refused instantly without the heap
+    // even growing. 26 qubits (1 GiB) is the largest single Vec that fits.
+    assert!(qsim::state::memory_bytes_required(26) <= WASM32_ISIZE_MAX);
+    assert!(qsim::state::memory_bytes_required(27) > WASM32_ISIZE_MAX);
+    assert_eq!(qsim::state::memory_bytes_required(27), 1 << 31);
+    // The cap is per allocation, not on the total: sharding is what gets past it.
+    assert_eq!(qsim::shard::plan(29, 26, 0).shards, 8);
+    assert!(qsim::shard::plan(29, 26, 0).bytes_per_shard <= WASM32_ISIZE_MAX);
+}
+
 #[test]
 fn oversized_allocation_errors_rather_than_panicking() {
     let err = StateVector::try_new(MAX_QUBITS + 1).unwrap_err();
