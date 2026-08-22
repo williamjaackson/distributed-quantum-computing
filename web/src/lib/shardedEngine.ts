@@ -288,6 +288,24 @@ export class ShardedEngine {
   }
 
   /**
+   * Fill every slice with random amplitudes and normalise globally.
+   *
+   * Returns the wall-clock cost, which is itself a measurement: this is the
+   * first time the pages are forced to hold real data.
+   */
+  async fill(seed: number): Promise<number> {
+    const t0 = performance.now();
+    const masses = await Promise.all(
+      this.handles.map((h) => h.send<number>({ kind: 'fillRandom', seed })),
+    );
+    const total = masses.reduce((a, b) => a + b, 0);
+    if (!(total > 0) || !Number.isFinite(total)) throw new Error(`fill produced mass ${total}`);
+    const factor = 1 / Math.sqrt(total);
+    await Promise.all(this.handles.map((h) => h.send({ kind: 'scale', factor })));
+    return performance.now() - t0;
+  }
+
+  /**
    * Sample the global distribution exactly, without ever forming it: pick a
    * shard in proportion to its probability mass, then sample inside that slice.
    */
@@ -363,31 +381,71 @@ export class ShardedEngine {
 // Capacity probe
 // ---------------------------------------------------------------------------
 
-/** One measured qubit count in the sharded probe. */
+/**
+ * How a qubit count came out.
+ *
+ * Deliberately not a boolean. "The allocation succeeded" turns out to be a very
+ * weak claim: a fresh state vector is all zeros, and zero pages are nearly free
+ * — the OS commits them lazily and its compressor squashes them away. Measured
+ * in Chrome, 6 GiB of zeros allocates in 13 ms (~460 GB/s, far above any real
+ * memory bandwidth, so nothing was actually written), while writing 1 GiB of
+ * varied data takes ~820 ms. So a size can allocate cleanly and still be
+ * unusable.
+ */
+export type SizeVerdict =
+  /** Allocated, filled with real data, and gates ran at a sane rate. */
+  | 'viable'
+  /** Allocated and filled, but throughput collapsed — swapping, not computing. */
+  | 'degraded'
+  /** A shard refused the allocation. */
+  | 'refused'
+  /** Not attempted: past the memory budget. */
+  | 'skipped';
+
+/** One measured qubit count. */
 export interface ShardedProbePoint {
   qubits: number;
   shards: number;
   localQubits: number;
   bytesPerShard: number;
   totalBytes: number;
-  allocated: boolean;
+  verdict: SizeVerdict;
   allocMs: number;
-  /** A gate below the shard boundary: no communication at all. */
+  /** Cost of forcing every page to hold real data. */
+  fillMs: number;
+  /**
+   * First local gate after the fill, including any first-touch page faulting.
+   * Reported separately because hiding it would misattribute setup cost to the
+   * steady-state rate.
+   */
+  localGateColdMs: number;
+  /** Warm local gate — the steady-state cost, and what the verdict uses. */
   localGateMs: number;
   /** A gate on a global qubit: pairs every shard and exchanges blocks. */
   globalGateMs: number;
+  /**
+   * Effective memory bandwidth of the warm local gate, in GB/s.
+   *
+   * Every gate reads and writes the whole state, so this is bounded by DRAM.
+   * It is the health signal: DRAM delivers tens of GB/s, swap well under one,
+   * and the size is only usable while this stays in the former regime.
+   */
+  bandwidthGBps: number;
   exchangedBlocks: number;
+  /** |norm - 1| after the gates, on a fully populated state. */
   normError: number;
   error?: string;
 }
 
-export type ShardedStopReason = 'budget' | 'allocation-failed' | 'user-limit';
-
 export interface ShardedProbeResult {
   points: ShardedProbePoint[];
-  maxQubits: number;
+  /** Largest size that actually computed at a sane rate. */
+  maxViableQubits: number;
+  /** Largest size that allocated at all, viable or not. */
+  maxAllocatedQubits: number;
+  peakBandwidthGBps: number;
+  viableFloorGBps: number;
   budgetBytes: number;
-  stopReason: ShardedStopReason;
   totalMs: number;
 }
 
@@ -397,12 +455,47 @@ export interface ShardedProbeOptions {
   /**
    * Hard cap on total allocation.
    *
-   * This is a guard rail, not an optimisation. Asking for more memory than the
-   * machine has does not fail gracefully — the browser kills the tab, taking the
-   * results with it. Measured here: 8 GiB succeeded, 16 GiB killed the renderer.
+   * A guard rail, not an optimisation. Overshooting RAM does not fail
+   * gracefully — the browser kills the tab and takes the results with it.
    */
   budgetBytes: number;
+  /**
+   * Absolute bandwidth floor, in GB/s, below which a size counts as degraded.
+   *
+   * Deliberately absolute rather than a fraction of the best size seen. Two
+   * things break a relative rule: bandwidth *rises* with worker count (measured
+   * ~20 GB/s on one worker, ~95 on four), so sizes with different shard counts
+   * are not comparable; and a running peak makes a verdict depend on the order
+   * sizes happened to be measured in.
+   *
+   * An absolute floor works because DRAM and swap are two orders of magnitude
+   * apart. Measured on this machine, healthy sizes ran 15-95 GB/s and thrashing
+   * ones 0-4, so anything in the low single digits is swapping rather than
+   * computing.
+   */
+  viableFloorGBps: number;
+  /**
+   * A cold gate slower than this marks the size degraded without re-timing it.
+   * Repeating a measurement that is already pathological only prolongs the
+   * thrashing.
+   */
+  giveUpAfterMs: number;
+  /** Non-zero probability mass is required after the fill, so the seed matters. */
+  seed: number;
 }
+
+export const DEFAULT_PROBE_OPTIONS: Omit<ShardedProbeOptions, 'budgetBytes'> = {
+  // Below ~24 qubits a gate is fast enough that RPC overhead dominates, so the
+  // bandwidth figure stops meaning anything and the size is never in question.
+  minQubits: 24,
+  maxQubits: 34,
+  viableFloorGBps: 5,
+  giveUpAfterMs: 20000,
+  seed: 0x5EED,
+};
+
+/** Where partial results are kept, so a tab crash still leaves evidence. */
+export const PROBE_STORAGE_KEY = 'qsim.shardedProbe.partial';
 
 /**
  * A conservative default memory budget.
@@ -418,17 +511,41 @@ export function defaultBudgetBytes(): number {
 /** Largest register that fits in `budgetBytes`. */
 export function maxQubitsForBudget(budgetBytes: number): number {
   let n = 1;
-  while ((16 * 2 ** (n + 1)) <= budgetBytes && n < 40) n++;
+  while (16 * 2 ** (n + 1) <= budgetBytes && n < 40) n++;
   return n;
 }
 
+function emptyPoint(n: number, layout: ShardLayout, verdict: SizeVerdict): ShardedProbePoint {
+  return {
+    qubits: n,
+    shards: layout.shards,
+    localQubits: layout.localQubits,
+    bytesPerShard: layout.bytesPerShard,
+    totalBytes: layout.totalBytes,
+    verdict,
+    allocMs: 0,
+    fillMs: 0,
+    localGateColdMs: NaN,
+    localGateMs: NaN,
+    globalGateMs: NaN,
+    bandwidthGBps: NaN,
+    exchangedBlocks: 0,
+    normError: NaN,
+  };
+}
+
 /**
- * Walk the qubit count upward, allocating a sharded register at each size and
- * timing one local gate and one cross-shard gate.
+ * Walk the qubit count upward, and at each size prove the register is actually
+ * *computable* rather than merely allocatable.
  *
- * Two timings rather than a full layer: they isolate the two costs that actually
- * matter — work below the boundary, which is free of communication, and work
- * above it, which is not.
+ * Per size: allocate every slice, fill them with random amplitudes so no page is
+ * left as free zeros, normalise, then time one local gate and one cross-shard
+ * gate and check the norm survived. A size only counts as viable if the fill
+ * succeeded and the local gate ran at a reasonable fraction of the best
+ * bandwidth seen — allocation alone proves almost nothing.
+ *
+ * Partial results are written to `localStorage` after every size, because the
+ * failure mode near the ceiling is the tab dying rather than an exception.
  */
 export async function probeSharded(
   options: ShardedProbeOptions,
@@ -437,95 +554,121 @@ export async function probeSharded(
   await initPlanning();
   const started = performance.now();
   const points: ShardedProbePoint[] = [];
-  let maxQubits = 0;
-  let stopReason: ShardedStopReason = 'user-limit';
+  let peakBandwidthGBps = 0;
+
+  const persist = () => {
+    try {
+      localStorage.setItem(
+        PROBE_STORAGE_KEY,
+        JSON.stringify({ at: Date.now(), budgetBytes: options.budgetBytes, points }),
+      );
+    } catch {
+      // Storage being unavailable must not abort a run.
+    }
+  };
 
   for (let n = options.minQubits; n <= options.maxQubits; n++) {
     const layout = planLayout(n);
     if (layout.totalBytes > options.budgetBytes) {
-      stopReason = 'budget';
+      points.push(emptyPoint(n, layout, 'skipped'));
+      persist();
       break;
     }
-    onPoint?.(
-      {
-        qubits: n,
-        shards: layout.shards,
-        localQubits: layout.localQubits,
-        bytesPerShard: layout.bytesPerShard,
-        totalBytes: layout.totalBytes,
-        allocated: false,
-        allocMs: 0,
-        localGateMs: NaN,
-        globalGateMs: NaN,
-        exchangedBlocks: 0,
-        normError: NaN,
-      },
-      n,
-    );
 
-    const t0 = performance.now();
+    onPoint?.(emptyPoint(n, layout, 'skipped'), n);
+
     let engine: ShardedEngine;
+    const tAlloc = performance.now();
     try {
       engine = await ShardedEngine.create(layout);
     } catch (e) {
-      points.push({
+      const p = emptyPoint(n, layout, 'refused');
+      p.allocMs = performance.now() - tAlloc;
+      p.error = e instanceof Error ? e.message : String(e);
+      points.push(p);
+      onPoint?.(p, n);
+      persist();
+      break;
+    }
+    const allocMs = performance.now() - tAlloc;
+
+    try {
+      // Force every page resident before timing anything. Without this the
+      // measurements describe a buffer of zeros, not a state vector.
+      const fillMs = await engine.fill(options.seed + n);
+
+      const time = async (fn: () => Promise<void>) => {
+        const t = performance.now();
+        await fn();
+        return performance.now() - t;
+      };
+
+      // The first gate pays first-touch faulting; the warm one is the steady
+      // state. Take the best of two warm runs, unless the cold one was already
+      // pathological -- re-timing a thrashing register just prolongs it.
+      const localGateColdMs = await time(() => engine.applyGate('h', [0]));
+      let localGateMs = localGateColdMs;
+      if (localGateColdMs < options.giveUpAfterMs) {
+        for (let rep = 0; rep < 2; rep++) {
+          localGateMs = Math.min(localGateMs, await time(() => engine.applyGate('h', [0])));
+        }
+      }
+      const globalGateMs = await time(() => engine.applyGate('h', [n - 1]));
+      const normError = Math.abs((await engine.norm()) - 1);
+
+      // Every gate reads and writes the whole state.
+      const bandwidthGBps = (layout.totalBytes * 2) / 1e9 / (localGateMs / 1000);
+      peakBandwidthGBps = Math.max(peakBandwidthGBps, bandwidthGBps);
+
+      const healthy = bandwidthGBps >= options.viableFloorGBps;
+      const point: ShardedProbePoint = {
         qubits: n,
         shards: layout.shards,
         localQubits: layout.localQubits,
         bytesPerShard: layout.bytesPerShard,
         totalBytes: layout.totalBytes,
-        allocated: false,
-        allocMs: performance.now() - t0,
-        localGateMs: NaN,
-        globalGateMs: NaN,
-        exchangedBlocks: 0,
-        normError: NaN,
-        error: e instanceof Error ? e.message : String(e),
-      });
-      stopReason = 'allocation-failed';
+        verdict: healthy && normError < 1e-9 ? 'viable' : 'degraded',
+        allocMs,
+        fillMs,
+        localGateColdMs,
+        localGateMs,
+        globalGateMs,
+        bandwidthGBps,
+        exchangedBlocks: engine.exchangedBlocks,
+        normError,
+      };
+      points.push(point);
+      onPoint?.(point, n);
+      persist();
+    } catch (e) {
+      // A shard dying mid-fill is the signature of running out of memory for
+      // real, as opposed to the allocator declining up front.
+      const p = emptyPoint(n, layout, 'refused');
+      p.allocMs = allocMs;
+      p.error = e instanceof Error ? e.message : String(e);
+      points.push(p);
+      onPoint?.(p, n);
+      persist();
+      engine.dispose();
       break;
     }
-    const allocMs = performance.now() - t0;
 
-    const time = async (fn: () => Promise<void>) => {
-      const t = performance.now();
-      await fn();
-      return performance.now() - t;
-    };
-    // Qubit 0 is always local; the top qubit is global whenever there is more
-    // than one shard.
-    const localGateMs = await time(() => engine.applyGate('h', [0]));
-    const globalGateMs = await time(() => engine.applyGate('h', [n - 1]));
-    const normError = Math.abs((await engine.norm()) - 1);
-
-    const point: ShardedProbePoint = {
-      qubits: n,
-      shards: layout.shards,
-      localQubits: layout.localQubits,
-      bytesPerShard: layout.bytesPerShard,
-      totalBytes: layout.totalBytes,
-      allocated: true,
-      allocMs,
-      localGateMs,
-      globalGateMs,
-      exchangedBlocks: engine.exchangedBlocks,
-      normError,
-    };
-    points.push(point);
-    maxQubits = n;
-    onPoint?.(point, n);
-
-    // Terminate before the next size: the slices must actually be handed back
-    // before a larger allocation is attempted.
+    // Hand the slices back before attempting a larger allocation. Worker
+    // termination is asynchronous on the OS side, and a too-short pause here
+    // leaks pressure into the next size and corrupts its measurement.
     engine.dispose();
-    await new Promise((r) => setTimeout(r, 50));
+    await new Promise((r) => setTimeout(r, 500));
   }
 
+  const viable = points.filter((p) => p.verdict === 'viable');
+  const allocated = points.filter((p) => p.verdict === 'viable' || p.verdict === 'degraded');
   return {
     points,
-    maxQubits,
+    maxViableQubits: viable.length ? viable[viable.length - 1].qubits : 0,
+    maxAllocatedQubits: allocated.length ? allocated[allocated.length - 1].qubits : 0,
+    peakBandwidthGBps,
+    viableFloorGBps: options.viableFloorGBps,
     budgetBytes: options.budgetBytes,
-    stopReason,
     totalMs: performance.now() - started,
   };
 }

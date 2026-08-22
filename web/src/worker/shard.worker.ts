@@ -111,6 +111,13 @@ function handle(req: ShardReq): { data: unknown; transfer?: Transferable[] } {
       return { data: null };
     }
 
+    case 'fillRandom':
+      return { data: shard.fillRandom(req.seed) };
+
+    case 'scale':
+      shard.scale(req.factor);
+      return { data: null };
+
     case 'mass':
       return { data: shard.probabilityMass() };
 

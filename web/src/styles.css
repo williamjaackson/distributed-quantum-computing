@@ -576,6 +576,12 @@ table.data tbody tr:hover {
   color: var(--status-critical);
 }
 
+/* Warning is sub-3:1 on the light surface by design; the icon + label pairing
+   is the mitigation, so a status colour never carries meaning alone. */
+.status-warn {
+  color: var(--status-warning);
+}
+
 .banner {
   display: flex;
   align-items: flex-start;
@@ -598,6 +604,98 @@ table.data tbody tr:hover {
 
 .banner-good {
   border-left: 3px solid var(--status-good);
+}
+
+/* ---------- verdict ladder ---------- */
+
+/* The at-a-glance answer: one chip per size attempted. Categorical outcomes
+   belong in labelled chips rather than a chart -- there is nothing to compare
+   along a scale, only a state to read. Each chip carries its number and an icon,
+   so the colour is reinforcement and never the sole channel. */
+.ladder {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.ladder-chip {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--surface-1);
+  border-left-width: 3px;
+  border-left-style: solid;
+  font-variant-numeric: tabular-nums;
+}
+
+.ladder-chip .n {
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.ladder-chip .meta {
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.ladder-viable {
+  border-left-color: var(--status-good);
+}
+
+.ladder-degraded {
+  border-left-color: var(--status-warning);
+}
+
+.ladder-refused {
+  border-left-color: var(--status-critical);
+}
+
+.ladder-skipped {
+  border-left-color: var(--axis);
+  opacity: 0.7;
+}
+
+.ladder-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  margin-top: 12px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.ladder-key {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.ladder-key i {
+  width: 3px;
+  height: 12px;
+  border-radius: 2px;
+  display: inline-block;
+  flex: none;
+}
+
+.key-viable {
+  background: var(--status-good);
+}
+
+.key-degraded {
+  background: var(--status-warning);
+}
+
+.key-refused {
+  background: var(--status-critical);
+}
+
+.key-skipped {
+  background: var(--axis);
 }
 
 .progress-line {

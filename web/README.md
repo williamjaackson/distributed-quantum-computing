@@ -64,11 +64,47 @@ WASM-to-JS and JS-to-WASM inside the workers. Nothing here needs
 `SharedArrayBuffer`, which means no COOP/COEP headers and no restrictions on
 where this can be hosted.
 
-**The probe uses a memory budget rather than probing until failure.** Overshooting
-RAM does not fail gracefully: the browser kills the tab and takes the results
-with it (measured — 8 GiB succeeded, 16 GiB killed the renderer). The default
-comes from `navigator.deviceMemory`, which is deliberately coarse and capped at
-8, so it reads as a conservative lower bound.
+### Validating a qubit count
+
+"The allocation succeeded" is a very weak claim, and the probe originally rested
+on it. A fresh state vector is all zeros, and zero pages are nearly free — the OS
+commits them lazily and its compressor squashes them away. Measured in Chrome:
+
+| Operation | Time |
+| --------- | ---- |
+| Allocate 6 GiB of zeros | **13 ms** (~460 GB/s — nothing was written) |
+| Write 1 GiB of varied data | **~820 ms** |
+
+Worse, the old workload left the register almost entirely zero: two Hadamards on
+a fresh state touch exactly **four** amplitudes at any size, so at 30 qubits
+99.9999996% of 16 GiB was zero bytes. A size could pass while being unusable.
+
+So each size is now: allocate every slice → **fill with random amplitudes** so no
+page is left as free zeros → normalise → time gates → check the norm survived.
+The fill doubles as the honest worst case, since real circuits spread amplitude
+across every basis state within a few layers.
+
+Sizes get a verdict rather than a boolean: `viable`, `degraded` (allocated and
+filled but thrashing), `refused`, or `skipped`.
+
+The verdict uses an **absolute** bandwidth floor, not a fraction of the best size
+seen. Two things break a relative rule: bandwidth *rises* with worker count
+(measured ~20 GB/s on one worker, ~95 on four), so sizes with different shard
+counts are not comparable; and a running peak makes a verdict depend on the order
+sizes happened to be measured in. An absolute floor works because DRAM and swap
+are two orders of magnitude apart.
+
+Gates are timed cold and warm separately. The first gate after a fill pays
+first-touch page faulting, and attributing that to the steady-state rate is what
+made an earlier run report false `degraded` verdicts.
+
+**A memory budget still caps the walk**, because overshooting RAM does not fail
+gracefully: the browser kills the tab and takes the results with it (measured —
+8 GiB succeeded, 16 GiB killed the renderer). The default comes from
+`navigator.deviceMemory`, which is deliberately coarse and capped at 8, so it
+reads as a conservative lower bound. Partial results are written to
+`localStorage` after every size, so a crash still leaves a record of where it
+stopped.
 
 Views over WASM memory are re-derived whenever the buffer identity changes.
 Growing WASM memory replaces the `ArrayBuffer` and detaches every view over the

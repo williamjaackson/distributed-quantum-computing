@@ -26,6 +26,10 @@ export type ShardReq =
       localCmask: number;
       buffer: ArrayBuffer;
     }
+  /** Fill with pseudorandom amplitudes; resolves with this slice's mass. */
+  | { id: number; kind: 'fillRandom'; seed: number }
+  /** Normalise after a distributed fill. */
+  | { id: number; kind: 'scale'; factor: number }
   | { id: number; kind: 'mass' }
   | { id: number; kind: 'localProbabilityOfOne'; qubit: number }
   | { id: number; kind: 'probabilities' }
