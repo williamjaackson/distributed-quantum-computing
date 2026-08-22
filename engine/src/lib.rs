@@ -18,6 +18,7 @@ pub mod dispatch;
 pub mod gates;
 pub mod measure;
 pub mod qaoa;
+pub mod qaoa_plan;
 pub mod rng;
 pub mod shard;
 pub mod state;
@@ -367,6 +368,92 @@ impl JsSimulator {
     pub fn set_basis_state(&mut self, index: f64) -> Result<(), JsValue> {
         self.inner.set_basis_state(index as usize).map_err(js_err)
     }
+}
+
+// ---------------------------------------------------------------------------
+// QAOA, as a circuit a caller can walk
+// ---------------------------------------------------------------------------
+
+/// The gates [`qaoa::run_qaoa`] would apply for a config, flattened.
+///
+/// Returns `[n_gates, then per gate: name_id, part_tag, part_index, n_qubits,
+/// qubits..., n_params, params...]`, where `name_id` indexes [`gate_names`] and
+/// `part_tag` is 0 superpose, 1 budget, 2 penalty, 3 mixer. See
+/// [`qaoa_plan::encode`].
+///
+/// The penalty list arrives as a flat qubit array plus offsets, one target and
+/// one multiplier per penalty — the shape a `Vec<PenaltySpec>` takes when it has
+/// to cross a boundary that carries only numbers.
+///
+/// `entities` are deliberately absent: they say how to *read* an allocation out
+/// of a basis state and have no effect on the circuit at all, so a caller that
+/// wants the gates should not have to describe them.
+#[wasm_bindgen(js_name = qaoaPlan)]
+pub fn qaoa_plan(
+    weights: Vec<f64>,
+    total_water: f64,
+    gamma: f64,
+    beta: f64,
+    global_lambda: f64,
+    penalty_qubits: Vec<u32>,
+    penalty_offsets: Vec<u32>,
+    penalty_targets: Vec<f64>,
+    penalty_multipliers: Vec<f64>,
+) -> Result<Vec<f64>, JsValue> {
+    let err = |m: String| JsValue::from_str(&m);
+    if weights.is_empty() {
+        return Err(err("qaoaPlan needs at least one weight".into()));
+    }
+    if penalty_offsets.is_empty() {
+        return Err(err("penalty_offsets needs a leading zero even with no penalties".into()));
+    }
+    let count = penalty_offsets.len() - 1;
+    if penalty_targets.len() != count || penalty_multipliers.len() != count {
+        return Err(err(format!(
+            "{count} penalties from offsets, but {} targets and {} multipliers",
+            penalty_targets.len(),
+            penalty_multipliers.len()
+        )));
+    }
+    if penalty_offsets[0] != 0 || *penalty_offsets.last().unwrap() as usize != penalty_qubits.len()
+    {
+        return Err(err("penalty_offsets must run from 0 to penalty_qubits.len()".into()));
+    }
+
+    let mut penalties = Vec::with_capacity(count);
+    for i in 0..count {
+        let (from, to) = (penalty_offsets[i] as usize, penalty_offsets[i + 1] as usize);
+        if to < from {
+            return Err(err("penalty_offsets must not decrease".into()));
+        }
+        let qubits: Vec<usize> = penalty_qubits[from..to].iter().map(|q| *q as usize).collect();
+        if let Some(bad) = qubits.iter().find(|q| **q >= weights.len()) {
+            return Err(err(format!(
+                "penalty {i} names qubit {bad}, but there are {} weights",
+                weights.len()
+            )));
+        }
+        penalties.push(qaoa::PenaltySpec::new(
+            format!("penalty {i}"),
+            qubits,
+            penalty_targets[i],
+            penalty_multipliers[i],
+        ));
+    }
+
+    let config = qaoa::QaoaConfig {
+        total_water,
+        gamma,
+        beta,
+        global_lambda,
+        weights,
+        // The circuit does not read these; see the note above.
+        entities: Vec::new(),
+        penalties,
+        shots: 0,
+        seed: 0,
+    };
+    Ok(qaoa_plan::encode(&qaoa_plan::plan(&config)))
 }
 
 // ---------------------------------------------------------------------------
