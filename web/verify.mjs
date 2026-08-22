@@ -11,7 +11,10 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { initSync, Simulator, gateNames } from '../engine/pkg/qsim.js';
+// Through the package name, not the path: the app's own modules import 'qsim',
+// and two specifiers that reach the same file still have to be the same module
+// instance or only one of them ends up initialised.
+import { initSync, Simulator, gateNames } from 'qsim';
 import { PROGRAMS } from './src/programs/index.ts';
 import { defaultValues } from './src/lib/inputs.ts';
 import { GATE_CONTROLS, GATE_PARAMS, gateArity } from './src/lib/steps.ts';
