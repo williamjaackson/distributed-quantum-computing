@@ -1,0 +1,12 @@
+{
+  "name": "quantum-computing",
+  "private": true,
+  "scripts": {
+    "build:wasm": "engine/build.sh",
+    "test:engine": "cd engine && cargo test",
+    "smoke": "node engine/smoke.mjs && node engine/smoke-sharded.mjs",
+    "dev": "npm run build:wasm && npm --prefix web run dev",
+    "build": "npm run build:wasm && npm --prefix web run build",
+    "preview": "npm --prefix web run preview"
+  }
+}
