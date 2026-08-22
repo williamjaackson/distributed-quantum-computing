@@ -14,104 +14,19 @@
 pub mod bench;
 pub mod circuits;
 pub mod complex;
+pub mod dispatch;
 pub mod gates;
 pub mod measure;
 pub mod rng;
+pub mod shard;
 pub mod state;
 
 use complex::C;
-use gates::Gate;
 use rng::Rng;
 use state::{QsimError, StateVector};
 use wasm_bindgen::prelude::*;
 
-// ---------------------------------------------------------------------------
-// Gate name dispatch
-// ---------------------------------------------------------------------------
-
-/// A parsed operation: a single-qubit unitary plus a control count, or a swap.
-///
-/// Folding every controlled gate into "unitary + N controls" means one kernel
-/// family covers CNOT, CZ, controlled-phase and Toffoli, and the JS side needs
-/// no per-gate binding — it passes a name, the qubits, and any angles.
-enum Op {
-    Unitary { gate: Gate, controls: usize },
-    Swap,
-}
-
-fn param(params: &[f64], i: usize, name: &str, needed: usize) -> Result<f64, QsimError> {
-    params
-        .get(i)
-        .copied()
-        .ok_or_else(|| QsimError::MissingParams {
-            gate: name.to_string(),
-            expected: needed,
-            got: params.len(),
-        })
-}
-
-fn parse_op(name: &str, params: &[f64]) -> Result<Op, QsimError> {
-    let lower = name.to_ascii_lowercase();
-    let n = lower.as_str();
-
-    let fixed = match n {
-        "h" => Some(Gate::H),
-        "x" => Some(Gate::X),
-        "y" => Some(Gate::Y),
-        "z" => Some(Gate::Z),
-        "s" => Some(Gate::S),
-        "sdg" => Some(Gate::Sdg),
-        "t" => Some(Gate::T),
-        "tdg" => Some(Gate::Tdg),
-        _ => None,
-    };
-    if let Some(g) = fixed {
-        return Ok(Op::Unitary { gate: g, controls: 0 });
-    }
-
-    // Rotations and phase shifts, one angle. The leading `c` marks the
-    // controlled variant, which reuses the same base gate.
-    let one_angle = matches!(
-        n,
-        "rx" | "ry" | "rz" | "p" | "phase" | "crx" | "cry" | "crz" | "cp" | "cphase"
-    );
-    if one_angle {
-        let theta = param(params, 0, n, 1)?;
-        let base = match n {
-            "rx" | "crx" => Gate::RX(theta),
-            "ry" | "cry" => Gate::RY(theta),
-            "rz" | "crz" => Gate::RZ(theta),
-            _ => Gate::P(theta),
-        };
-        let controls = if n.starts_with('c') { 1 } else { 0 };
-        return Ok(Op::Unitary { gate: base, controls });
-    }
-
-    match n {
-        "u3" | "u" => Ok(Op::Unitary {
-            gate: Gate::U3(
-                param(params, 0, n, 3)?,
-                param(params, 1, n, 3)?,
-                param(params, 2, n, 3)?,
-            ),
-            controls: 0,
-        }),
-        "cx" | "cnot" => Ok(Op::Unitary { gate: Gate::X, controls: 1 }),
-        "cy" => Ok(Op::Unitary { gate: Gate::Y, controls: 1 }),
-        "cz" => Ok(Op::Unitary { gate: Gate::Z, controls: 1 }),
-        "ch" => Ok(Op::Unitary { gate: Gate::H, controls: 1 }),
-        "ccx" | "toffoli" => Ok(Op::Unitary { gate: Gate::X, controls: 2 }),
-        "ccz" => Ok(Op::Unitary { gate: Gate::Z, controls: 2 }),
-        "swap" => Ok(Op::Swap),
-        _ => Err(QsimError::UnknownGate(name.to_string())),
-    }
-}
-
-/// Every gate name [`Simulator::apply_named`] understands, for UI palettes.
-pub const GATE_NAMES: &[&str] = &[
-    "h", "x", "y", "z", "s", "sdg", "t", "tdg", "rx", "ry", "rz", "p", "u3", "cx", "cy", "cz",
-    "ch", "crx", "cry", "crz", "cp", "ccx", "ccz", "swap",
-];
+pub use dispatch::GATE_NAMES;
 
 // ---------------------------------------------------------------------------
 // Simulator — the pure-Rust API
@@ -161,29 +76,7 @@ impl Simulator {
         qubits: &[u32],
         params: &[f64],
     ) -> Result<(), QsimError> {
-        match parse_op(name, params)? {
-            Op::Swap => {
-                if qubits.len() != 2 {
-                    return Err(QsimError::WrongArity {
-                        gate: name.to_string(),
-                        expected: 2,
-                        got: qubits.len(),
-                    });
-                }
-                gates::apply_swap(&mut self.sv, qubits[0], qubits[1])
-            }
-            Op::Unitary { gate, controls } => {
-                if qubits.len() != controls + 1 {
-                    return Err(QsimError::WrongArity {
-                        gate: name.to_string(),
-                        expected: controls + 1,
-                        got: qubits.len(),
-                    });
-                }
-                let (ctrl, target) = qubits.split_at(controls);
-                gates::apply_controlled(&mut self.sv, gate, ctrl, target[0])
-            }
-        }
+        dispatch::apply_named(&mut self.sv, name, qubits, params)
     }
 
     /// Total probability — 1.0 for any correct unitary sequence.
@@ -469,4 +362,215 @@ pub fn gate_names() -> Vec<String> {
 #[wasm_bindgen(js_name = engineVersion)]
 pub fn engine_version() -> String {
     env!("CARGO_PKG_VERSION").to_string()
+}
+
+// ---------------------------------------------------------------------------
+// Sharded execution bindings
+// ---------------------------------------------------------------------------
+
+/// One slice of a sharded state vector, for a worker to own.
+///
+/// # Pointer validity
+///
+/// [`JsShard::amps_offset`] and [`JsShard::scratch_offset`] are byte offsets into
+/// this module's linear memory. Growing WASM memory detaches the old
+/// `ArrayBuffer`, so any `Float64Array` view over it goes stale. Construct the
+/// shard first, then take views — after that nothing here allocates, so the
+/// views stay valid for the lifetime of the shard.
+#[wasm_bindgen(js_name = Shard)]
+pub struct JsShard {
+    inner: shard::Shard,
+}
+
+#[wasm_bindgen(js_class = Shard)]
+impl JsShard {
+    #[wasm_bindgen(constructor)]
+    pub fn new(local_qubits: u32, shard_bits: u32, index: u32) -> Result<JsShard, JsValue> {
+        Ok(JsShard {
+            inner: shard::Shard::try_new(local_qubits, shard_bits, index).map_err(js_err)?,
+        })
+    }
+
+    #[wasm_bindgen(getter, js_name = localQubits)]
+    pub fn local_qubits(&self) -> u32 {
+        self.inner.local_qubits()
+    }
+
+    #[wasm_bindgen(getter, js_name = globalQubits)]
+    pub fn global_qubits(&self) -> u32 {
+        self.inner.global_qubits()
+    }
+
+    #[wasm_bindgen(getter, js_name = shardIndex)]
+    pub fn shard_index(&self) -> u32 {
+        self.inner.index()
+    }
+
+    /// Amplitudes in this slice.
+    #[wasm_bindgen(getter, js_name = sliceAmplitudes)]
+    pub fn slice_amplitudes(&self) -> f64 {
+        self.inner.len() as f64
+    }
+
+    /// Byte offset of the amplitude array in linear memory.
+    #[wasm_bindgen(getter, js_name = ampsOffset)]
+    pub fn amps_offset(&self) -> u32 {
+        self.inner.amps().as_ptr() as usize as u32
+    }
+
+    /// Byte offset of the exchange staging buffer.
+    #[wasm_bindgen(getter, js_name = scratchOffset)]
+    pub fn scratch_offset(&mut self) -> u32 {
+        self.inner.scratch_mut().as_ptr() as usize as u32
+    }
+
+    #[wasm_bindgen(getter, js_name = blockAmplitudes)]
+    pub fn block_amplitudes(&self) -> f64 {
+        self.inner.block_amps() as f64
+    }
+
+    #[wasm_bindgen(getter, js_name = numBlocks)]
+    pub fn num_blocks(&self) -> u32 {
+        self.inner.num_blocks() as u32
+    }
+
+    pub fn reset(&mut self) {
+        self.inner.reset();
+    }
+
+    /// Apply a planned local step: a base gate with an explicit control list, on
+    /// local qubit indices.
+    #[wasm_bindgen(js_name = applyLocalBase)]
+    pub fn apply_local_base(
+        &mut self,
+        base: &str,
+        params: Vec<f64>,
+        controls: Vec<u32>,
+        target: u32,
+    ) -> Result<(), JsValue> {
+        self.inner
+            .apply_local_base(base, &params, &controls, target)
+            .map_err(js_err)
+    }
+
+    /// Apply one block of a planned pair step. The partner's block must already
+    /// have been written into the scratch buffer.
+    #[wasm_bindgen(js_name = applyPair)]
+    pub fn apply_pair(
+        &mut self,
+        base: &str,
+        params: Vec<f64>,
+        block: u32,
+        is_low: bool,
+        local_cmask: f64,
+    ) -> Result<(), JsValue> {
+        self.inner
+            .apply_pair(base, &params, block as usize, is_low, local_cmask as usize)
+            .map_err(js_err)
+    }
+
+    /// Fill with pseudorandom amplitudes and return this slice's probability mass.
+    ///
+    /// Capacity validation needs this: a freshly allocated slice is all zeros,
+    /// and zero pages are nearly free (committed lazily, then compressed away),
+    /// so an allocation can succeed at a size that could never really be
+    /// computed on. Filling forces every page resident.
+    #[wasm_bindgen(js_name = fillRandom)]
+    pub fn fill_random(&mut self, seed: f64) -> f64 {
+        self.inner.fill_random(seed as u64)
+    }
+
+    /// Multiply every amplitude by `factor`, to normalise after a filled slice.
+    pub fn scale(&mut self, factor: f64) {
+        self.inner.scale(factor);
+    }
+
+    /// This slice's share of the total probability; sum across shards for the norm.
+    #[wasm_bindgen(js_name = probabilityMass)]
+    pub fn probability_mass(&self) -> f64 {
+        self.inner.probability_mass()
+    }
+
+    /// P(qubit = 1) over this slice only, for a *local* qubit.
+    #[wasm_bindgen(js_name = localProbabilityOfOne)]
+    pub fn local_probability_of_one(&self, qubit: u32) -> Result<f64, JsValue> {
+        self.inner.local_probability_of_one(qubit).map_err(js_err)
+    }
+
+    /// Sample this slice's local distribution, flattened to
+    /// `[local_index, count, ...]`. The orchestrator picks which shard to draw
+    /// from in proportion to `probabilityMass`, which keeps the overall sample
+    /// exact without ever forming the global distribution.
+    #[wasm_bindgen(js_name = sampleLocalFlat)]
+    pub fn sample_local_flat(&self, shots: u32, seed: f64) -> Vec<f64> {
+        let pairs = measure::sample_unnormalised(self.inner.amps(), shots, seed as u64);
+        let mut out = Vec::with_capacity(pairs.len() * 2);
+        for (idx, count) in pairs {
+            out.push(idx as f64);
+            out.push(count as f64);
+        }
+        out
+    }
+
+    /// Probabilities across this slice. Guarded like the whole-state version.
+    pub fn probabilities(&self) -> Result<Vec<f64>, JsValue> {
+        if self.inner.local_qubits() > measure::FULL_ARRAY_QUBIT_LIMIT {
+            return Err(js_err(QsimError::TooLargeForOperation {
+                n_qubits: self.inner.local_qubits(),
+                limit: measure::FULL_ARRAY_QUBIT_LIMIT,
+            }));
+        }
+        Ok(self.inner.amps().iter().map(|a| a.norm_sqr()).collect())
+    }
+}
+
+/// Plan a gate against a shard layout, flattened for the orchestrator.
+///
+/// See [`shard::encode_plan`] for the layout. Planning is pure arithmetic and
+/// costs nothing next to the block copies it schedules, so it runs per gate.
+#[wasm_bindgen(js_name = planGate)]
+pub fn plan_gate(
+    name: &str,
+    qubits: Vec<u32>,
+    params: Vec<f64>,
+    local_qubits: u32,
+    shard_bits: u32,
+) -> Result<Vec<f64>, JsValue> {
+    let steps =
+        shard::plan_gate(name, &qubits, &params, local_qubits, shard_bits).map_err(js_err)?;
+    Ok(shard::encode_plan(&steps))
+}
+
+/// Uncontrolled gate names, indexed by the `base_id` a plan step carries.
+#[wasm_bindgen(js_name = baseGates)]
+pub fn base_gates() -> Vec<String> {
+    dispatch::BASE_GATES.iter().map(|s| s.to_string()).collect()
+}
+
+/// Choose a shard layout: `[shard_bits, local_qubits, shards, bytes_per_shard, total_bytes]`.
+#[wasm_bindgen(js_name = planShards)]
+pub fn plan_shards(global_qubits: u32, max_shard_qubits: u32, min_shard_bits: u32) -> Vec<f64> {
+    let p = shard::plan(global_qubits, max_shard_qubits, min_shard_bits);
+    vec![
+        p.shard_bits as f64,
+        p.local_qubits as f64,
+        p.shards as f64,
+        p.bytes_per_shard as f64,
+        p.total_bytes as f64,
+    ]
+}
+
+/// Largest slice a single shard should hold, in qubits.
+///
+/// 26 qubits is 1 GiB — comfortably under the 2 GiB `isize::MAX` cap on a single
+/// allocation, with room for the scratch block and allocator overhead.
+#[wasm_bindgen(js_name = maxShardQubits)]
+pub fn max_shard_qubits() -> u32 {
+    26
+}
+
+/// Amplitudes per exchange block.
+#[wasm_bindgen(js_name = blockAmplitudes)]
+pub fn block_amplitudes() -> f64 {
+    shard::BLOCK_AMPS as f64
 }
