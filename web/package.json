@@ -6,7 +6,8 @@
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "verify": "node --import ./tsresolve.mjs ./verify.mjs"
   },
   "dependencies": {
     "qsim": "file:../engine/pkg",

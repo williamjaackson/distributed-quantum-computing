@@ -8,6 +8,8 @@
     "dev": "npm run build:wasm && npm --prefix web run dev",
     "build": "npm run build:wasm && npm --prefix web run build",
     "preview": "npm --prefix web run preview",
-    "typecheck": "npm --prefix web run typecheck"
+    "typecheck": "npm --prefix web run typecheck",
+    "verify": "npm --prefix web run verify",
+    "test": "npm run test:engine && npm run smoke && npm run typecheck && npm run verify"
   }
 }
