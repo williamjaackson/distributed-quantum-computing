@@ -37,8 +37,6 @@ pub enum QsimError {
     BlockOutOfRange { block: usize, blocks: usize },
     /// Gate cannot run as an elementwise shard pairing (SWAP must be decomposed).
     NotPairable(String),
-    /// Oracle parameters do not describe a reversible map.
-    InvalidOracle(String),
 }
 
 impl std::fmt::Display for QsimError {
@@ -81,7 +79,6 @@ impl std::fmt::Display for QsimError {
                 f,
                 "gate {g} cannot run as a shard pairing; decompose it first"
             ),
-            QsimError::InvalidOracle(why) => write!(f, "invalid oracle: {why}"),
         }
     }
 }
