@@ -20,7 +20,7 @@
  */
 import type { Backend, EngineLimits, Execution } from './backend';
 import { createBackend, engineLimits, loadWasm, TOP_K } from './backend';
-import { GATE_CONTROLS, GATE_PARAMS } from './steps';
+import { GATE_PARAMS, gateArity, GATE_CONTROLS } from './steps';
 import type { Classical, Frame, InputValues, Program, Step, Timeline } from './types';
 
 /**
@@ -95,11 +95,17 @@ function validate(step: Step, nQubits: number): void {
     }
     return;
   }
-  const controls = GATE_CONTROLS[step.name];
-  if (controls === undefined) throw new Error(`unknown gate '${step.name}'`);
-  const arity = step.name === 'swap' ? 2 : controls + 1;
-  if (step.qubits.length !== arity) {
+  if (GATE_CONTROLS[step.name] === undefined) {
+    throw new Error(`unknown gate '${step.name}'`);
+  }
+  const arity = gateArity(step.name);
+  if (arity !== null && step.qubits.length !== arity) {
     throw new Error(`gate '${step.name}' takes ${arity} qubit(s), got ${step.qubits.length}`);
+  }
+  // A variadic gate needs at least one control and a target, which is the one
+  // arity mistake its name cannot rule out.
+  if (arity === null && step.qubits.length < 2) {
+    throw new Error(`gate '${step.name}' needs a control and a target`);
   }
   const wanted = GATE_PARAMS[step.name] ?? 0;
   if (step.params.length !== wanted) {

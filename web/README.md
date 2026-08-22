@@ -81,6 +81,13 @@ kilobytes rather than megabytes. Those come from the engine's own
 proportional to the state, so they stay available at any size. Past 22 qubits is
 an explicit choice in the Execution panel, with the memory cost stated.
 
+Grover is the one program whose limit is the *circuit*, not the register. A
+round is about `6n + 2` gates and the optimal round count grows as `sqrt(2^n)`,
+so the whole search grows as `n · 2^(n/2)` — around 1500 steps at ten qubits,
+which is where the timeline's own step limit lands. Its oracle is a single
+`mcz` at any width, because the engine takes a gate's control count from the
+call.
+
 Correlation links are the one thing that gets switched off rather than
 approximated: a link needs one pass over the state per pair, so all pairs is
 `O(n² · 2ⁿ)`. The budget allows it to about 19 qubits, and the map says so
