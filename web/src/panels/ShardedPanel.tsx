@@ -4,8 +4,15 @@ import { DataTable, TableDisclosure, type Column } from '../components/DataTable
 import { Hero, StatTile } from '../components/StatTile';
 import { formatBytes, formatCount, formatMs } from '../lib/format';
 import {
+  DEFAULT_MEMORY_PROBE,
+  deviceMemoryGiB,
+  fallbackBudgetBytes,
+  measureUsableMemory,
+  suggestBudgetBytes,
+  type MemoryProbeResult,
+} from '../lib/memoryProbe';
+import {
   DEFAULT_PROBE_OPTIONS,
-  defaultBudgetBytes,
   initPlanning,
   maxQubitsForBudget,
   probeSharded,
@@ -37,6 +44,77 @@ function Verdict({ verdict }: { verdict: SizeVerdict }) {
       </span>
       {VERDICT_LABEL[verdict]}
     </span>
+  );
+}
+
+/**
+ * What the machine actually has, versus what it admits to.
+ *
+ * Worth showing side by side: `navigator.deviceMemory` is capped at 8 and absent
+ * outside a secure context, so a reader who sees "8" needs to know that is the
+ * API's ceiling and not their hardware.
+ */
+function MemoryReadout({
+  memory,
+  reportedGiB,
+}: {
+  memory: MemoryProbeResult | null;
+  reportedGiB: number | null;
+}) {
+  if (!memory) {
+    return (
+      <div className="banner">
+        <div>
+          <strong>Budget defaults to a floor, not a measurement.</strong>{' '}
+          {reportedGiB === null ? (
+            <>
+              <span className="mono">navigator.deviceMemory</span> is unavailable here — it needs a
+              secure context, so it is absent over plain HTTP to a LAN address.
+            </>
+          ) : (
+            <>
+              <span className="mono">navigator.deviceMemory</span> reports {reportedGiB} GiB, but the
+              Device Memory API <em>caps that value at 8</em> to limit fingerprinting — it reads 8 on
+              a 16 GB machine and 8 on a 128 GB one, so it cannot describe a large machine.
+            </>
+          )}{' '}
+          There is no web API for total RAM, so press <strong>Detect</strong> to measure this one, or
+          just type a budget.
+        </div>
+      </div>
+    );
+  }
+
+  const knee = memory.stop === 'knee';
+  return (
+    <div className="banner banner-good">
+      <div>
+        <strong>
+          Measured {Math.floor(memory.fastBytes / GIB)} GiB committable at full speed
+        </strong>{' '}
+        (peak {memory.peakGBps.toFixed(0)} GB/s
+        {memory.baseline && `, knee below ${memory.baseline.kneeAtGBps.toFixed(1)} GB/s`},{' '}
+        {(memory.elapsedMs / 1000).toFixed(1)} s).{' '}
+        {knee ? (
+          <>
+            Past that the write rate fell away as the OS compressor engaged. Memory beyond the knee
+            still works — measured about 4x slower — which is exactly why a budget larger than RAM
+            can appear to succeed.
+          </>
+        ) : (
+          <>
+            Stopped at {(memory.committedBytes / GIB).toFixed(0)} GiB without finding a knee
+            ({memory.stop}), so this is a lower bound on the machine.
+          </>
+        )}{' '}
+        {reportedGiB !== null && (
+          <>
+            For comparison, <span className="mono">navigator.deviceMemory</span> reports{' '}
+            {reportedGiB} GiB — that API is capped at 8.
+          </>
+        )}
+      </div>
+    </div>
   );
 }
 
@@ -94,8 +172,11 @@ function VerdictLadder({ points, floorGBps }: { points: ShardedProbePoint[]; flo
 }
 
 export function ShardedPanel() {
-  const safeBudget = useMemo(() => defaultBudgetBytes(), []);
-  const [budgetGiB, setBudgetGiB] = useState(safeBudget / GIB);
+  const reportedGiB = useMemo(() => deviceMemoryGiB(), []);
+  const [budgetGiB, setBudgetGiB] = useState(() => fallbackBudgetBytes() / GIB);
+  const [memory, setMemory] = useState<MemoryProbeResult | null>(null);
+  const [detecting, setDetecting] = useState(false);
+  const [detectProgress, setDetectProgress] = useState<string | null>(null);
   const [ready, setReady] = useState(false);
   const [running, setRunning] = useState(false);
   const [stage, setStage] = useState<string | null>(null);
@@ -111,6 +192,28 @@ export function ShardedPanel() {
     return () => {
       alive = false;
     };
+  }, []);
+
+  const detect = useCallback(async () => {
+    setDetecting(true);
+    setError(null);
+    setDetectProgress(null);
+    try {
+      const res = await measureUsableMemory(DEFAULT_MEMORY_PROBE, (step) =>
+        setDetectProgress(
+          `${(step.committedBytes / GIB).toFixed(1)} GiB committed at ${step.chunkGBps.toFixed(1)} GB/s`,
+        ),
+      );
+      setMemory(res);
+      setBudgetGiB(suggestBudgetBytes(res.fastBytes) / GIB);
+      // Give the OS a moment to reclaim before anything else allocates.
+      await new Promise((r) => setTimeout(r, 750));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setDetecting(false);
+      setDetectProgress(null);
+    }
   }, []);
 
   const budgetBytes = budgetGiB * GIB;
@@ -159,28 +262,39 @@ export function ShardedPanel() {
     <>
       <div className="controls">
         <div className="control">
-          <label htmlFor="budget">Memory budget</label>
-          <select
+          <label htmlFor="budget">Memory budget (GiB)</label>
+          <input
             id="budget"
+            type="number"
+            min={1}
+            max={512}
+            step={1}
             value={budgetGiB}
-            disabled={running}
-            onChange={(e) => setBudgetGiB(Number(e.target.value))}
-          >
-            {[safeBudget / GIB, (safeBudget * 1.5) / GIB, (safeBudget * 2) / GIB].map((g, i) => (
-              <option key={g} value={g}>
-                {g} GiB — {['recommended', 'beyond reported RAM', 'likely to kill the tab'][i]}
-              </option>
-            ))}
-          </select>
+            disabled={running || detecting}
+            onChange={(e) =>
+              setBudgetGiB(Math.max(1, Math.min(512, Number(e.target.value) || 1)))
+            }
+          />
         </div>
+        <button className="secondary" onClick={detect} disabled={running || detecting}>
+          {detecting ? 'Measuring…' : 'Detect'}
+        </button>
         <button className="primary" onClick={run} disabled={running}>
           {running ? 'Probing…' : points.length ? 'Run again' : 'Run sharded probe'}
         </button>
         <p className="control-hint">
           At each size: allocate, fill with real amplitudes, then time gates. Stops at {ceiling}{' '}
-          qubits for this budget.
+          qubits for this budget. <strong>Detect</strong> measures this machine.
         </p>
       </div>
+
+      {detecting && (
+        <p className="progress-line">
+          Committing memory to find the limit… {detectProgress ?? ''}
+        </p>
+      )}
+
+      <MemoryReadout memory={memory} reportedGiB={reportedGiB} />
 
       <div className="banner">
         <div>

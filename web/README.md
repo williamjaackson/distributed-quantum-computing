@@ -99,12 +99,47 @@ first-touch page faulting, and attributing that to the steady-state rate is what
 made an earlier run report false `degraded` verdicts.
 
 **A memory budget still caps the walk**, because overshooting RAM does not fail
-gracefully: the browser kills the tab and takes the results with it (measured —
-8 GiB succeeded, 16 GiB killed the renderer). The default comes from
-`navigator.deviceMemory`, which is deliberately coarse and capped at 8, so it
-reads as a conservative lower bound. Partial results are written to
-`localStorage` after every size, so a crash still leaves a record of where it
-stopped.
+gracefully: the browser kills the tab and takes the results with it. Partial
+results are written to `localStorage` after every size, so a crash still leaves a
+record of where it stopped.
+
+### Sizing the budget to the actual machine
+
+`navigator.deviceMemory` cannot do this. It is deliberately coarse **and capped
+at 8** to limit fingerprinting, so it reads 8 on a 16 GB machine and 8 on a
+128 GB one, and it is absent entirely outside a secure context (so, missing when
+served over plain HTTP to a LAN address). There is no web API for total RAM.
+
+So `src/lib/memoryProbe.ts` measures it: commit chunks of real, varied data and
+watch the write rate. What that reveals is not a cliff but two knees, measured on
+a 16 GB M4:
+
+```text
+ 0.5 - 6.5 GiB   7-18 GB/s   uncompressed, free pages available
+ 7.0 - 7.5 GiB   1-2  GB/s   transition: the OS compressor engages
+ 8.0 - 14  GiB   ~3   GB/s   compressed - still works, roughly 4x slower
+```
+
+It committed the full 14 GiB on a 16 GB machine without dying. That is precisely
+why a budget larger than RAM appears to work, and why "did it allocate" is
+worthless as a test. The reported figure is the **first** knee.
+
+Getting that detection right took two corrections, both worth keeping in mind:
+
+- The first chunk is unrepresentatively fast (cache-resident template, fresh
+  heap). Including it made the probe report 1 GiB on a machine `vm_stat` showed
+  had 6.9 GiB free. Warm-up chunks are now excluded.
+- The knee is measured against a **stable baseline of the same measurement**, not
+  a running peak. This is relative where the qubit-count verdict is absolute, and
+  the difference is real: chunk-to-chunk here is like-for-like, whereas the
+  qubit-count probe compares configurations with different worker counts. The
+  uncompressed rate is a property of the machine, so a fixed GB/s figure would
+  misjudge slower and faster hardware alike.
+
+The transition is noisy — one chunk dipped to 1.16 GB/s then recovered to 3.5 —
+so the decision rests on a rolling median, never a single sample. The budget is
+a plain numeric input, so it can always be set by hand regardless of what the
+probe or the browser says.
 
 Views over WASM memory are re-derived whenever the buffer identity changes.
 Growing WASM memory replaces the `ArrayBuffer` and detaches every view over the
