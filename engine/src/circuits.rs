@@ -133,3 +133,228 @@ pub fn teleport(
     }
     Ok((m0, m1))
 }
+
+/// Greatest common divisor, for oracle validation and period post-processing.
+pub fn gcd(mut a: u64, mut b: u64) -> u64 {
+    while b != 0 {
+        let t = b;
+        b = a % b;
+        a = t;
+    }
+    a
+}
+
+/// Modular exponentiation, by square-and-multiply.
+pub fn mod_pow(mut base: u64, mut exp: u64, modulus: u64) -> u64 {
+    if modulus == 1 {
+        return 0;
+    }
+    let mut acc: u64 = 1;
+    base %= modulus;
+    while exp > 0 {
+        if exp & 1 == 1 {
+            acc = acc * base % modulus;
+        }
+        base = base * base % modulus;
+        exp >>= 1;
+    }
+    acc
+}
+
+/// Modular exponentiation oracle: |x>|y> -> |x>|y * a^x mod N>.
+///
+/// The work register occupies the low `work_qubits` index bits and the counting
+/// register sits above it, so a global index splits as
+/// `(x << work_qubits) | y`. Starting from |y = 1> this leaves
+/// |x>|a^x mod N>, whose period in x is the order of `a` — the quantity Shor's
+/// algorithm extracts.
+///
+/// Applied straight to the amplitude array rather than decomposed into gates.
+/// A gate-level modular multiplier costs a few thousand Toffolis plus its own
+/// ancilla registers, which would dominate the qubit budget and the runtime
+/// while teaching nothing about period finding — the part that is actually
+/// quantum. Grover's oracle is handled the same way, for the same reason.
+///
+/// Reversible because `y -> y * a^x mod N` is a bijection on `0..N` whenever
+/// `gcd(a, N) = 1`; values at or above `N` are untouched fixed points, since the
+/// work register is wider than the modulus in general.
+///
+/// One pass over the state: `a^x` advances by a single multiply per block rather
+/// than a fresh exponentiation.
+pub fn modexp_oracle(
+    sv: &mut StateVector,
+    a: u64,
+    modulus: u64,
+    work_qubits: u32,
+) -> Result<(), QsimError> {
+    modexp_oracle_from(sv, a, modulus, work_qubits, 1)
+}
+
+/// [`modexp_oracle`], but starting from an arbitrary power of `a`.
+///
+/// This is what makes the oracle shard-local. The counting register occupies the
+/// high index bits, so a shard id *is* the top of `x`, and
+/// `a^x = a^(offset) * a^(x_low)` splits cleanly: each shard needs only the power
+/// of `a` at its first `x`, which is classical arithmetic. No shard ever needs
+/// another shard's amplitudes, so the whole oracle costs zero communication.
+pub fn modexp_oracle_from(
+    sv: &mut StateVector,
+    a: u64,
+    modulus: u64,
+    work_qubits: u32,
+    start_power: u64,
+) -> Result<(), QsimError> {
+    if modulus < 2 {
+        return Err(QsimError::InvalidOracle(format!("modulus {modulus} must be at least 2")));
+    }
+    if work_qubits > sv.n_qubits() {
+        return Err(QsimError::InvalidOracle(format!(
+            "work register of {work_qubits} exceeds the {}-qubit state",
+            sv.n_qubits()
+        )));
+    }
+    let block = 1usize << work_qubits;
+    if (block as u64) < modulus {
+        return Err(QsimError::InvalidOracle(format!(
+            "work register of {work_qubits} qubits cannot hold values mod {modulus}"
+        )));
+    }
+    if gcd(a % modulus, modulus) != 1 {
+        return Err(QsimError::InvalidOracle(format!(
+            "a = {a} shares a factor with {modulus}, so the map is not reversible"
+        )));
+    }
+
+    let len = sv.len();
+    let blocks = len / block;
+    let m = (modulus as usize).min(block);
+
+    let mut scratch: Vec<C> = Vec::new();
+    scratch
+        .try_reserve_exact(m)
+        .map_err(|_| QsimError::OutOfMemory { requested: work_qubits, bytes: (m as u64) * 16 })?;
+    scratch.resize(m, C::ZERO);
+
+    // c tracks a^x mod N incrementally across blocks, seeded at this slice's
+    // first x rather than always at x = 0.
+    let mut c: u64 = start_power % modulus;
+    let a_mod = a % modulus;
+    for x in 0..blocks {
+        let base = x * block;
+        scratch.copy_from_slice(&sv.amps()[base..base + m]);
+        for y in 0..m {
+            let ny = ((y as u64) * c % modulus) as usize;
+            sv.amps_mut()[base + ny] = scratch[y];
+        }
+        let _ = x;
+        c = c * a_mod % modulus;
+    }
+    Ok(())
+}
+
+/// The multiplicative order of `a` modulo `N` — the period the algorithm is
+/// looking for. Classical, and only for checking the quantum answer.
+pub fn multiplicative_order(a: u64, modulus: u64) -> Option<u64> {
+    if modulus < 2 || gcd(a % modulus, modulus) != 1 {
+        return None;
+    }
+    let mut c = a % modulus;
+    for r in 1..=modulus {
+        if c == 1 {
+            return Some(r);
+        }
+        c = c * (a % modulus) % modulus;
+    }
+    None
+}
+
+/// Largest period a counting register of `count_qubits` can resolve.
+///
+/// Continued fractions pin `s/r` down uniquely when `2^t > 2r²`, so the reach
+/// grows only as the *square root* of the register. This is the real constraint on
+/// Shor's algorithm and the reason the counting register conventionally gets twice
+/// the work register rather than the same.
+pub fn resolvable_period(count_qubits: u32) -> u64 {
+    ((2f64.powi(count_qubits as i32)) / 2.0).sqrt() as u64
+}
+
+/// Recover a period from a measured phase by continued fractions.
+///
+/// The measurement gives `m` with `m / precision ≈ s / r`. Expanding that and
+/// testing convergent denominators finds `r`, and since `a^r ≡ 1 mod N` is
+/// checkable the result verifies itself.
+///
+/// This lives in Rust deliberately. It first shipped as TypeScript with no tests
+/// and was wrong in a way that looked like success: the multiplier used to handle
+/// `gcd(s, r) > 1` was unbounded, and because the first convergent of any
+/// `m < precision` has denominator 1, the loop degenerated into testing
+/// `r = 1, 2, 3, …` until `a^r ≡ 1`. That is a classical brute-force order search.
+/// It ignored the measurement completely — every phase returned the same period —
+/// and "factored" numbers whose order the register could not possibly resolve.
+///
+/// Two constraints prevent that, and both are covered by tests below:
+///
+/// * `max_multiplier` is bounded, so a denominator of 1 can never become a search.
+/// * the period must *explain* the measurement — some `s/r` with `s >= 1` within
+///   one phase step of `m / precision`. Without it a large multiple of the true
+///   order passes, which is a valid period but usually splits nothing; and
+///   without the `s >= 1` part, "the phase is near zero" would validate any
+///   period at all.
+///
+/// The smallest surviving candidate wins, since `a^(r/2)` only splits `N` when `r`
+/// is the true order rather than a multiple of it.
+pub fn period_from_phase(
+    measured: u64,
+    precision: u64,
+    a: u64,
+    modulus: u64,
+    max_multiplier: u64,
+) -> Option<u64> {
+    if measured == 0 || precision == 0 || modulus < 2 {
+        return None;
+    }
+    let (mut x, mut y) = (measured, precision);
+    // Convergent recurrence: h_i = a_i h_{i-1} + h_{i-2}, likewise for k.
+    let (mut h_prev, mut h) = (0u64, 1u64);
+    let (mut k_prev, mut k) = (1u64, 0u64);
+    let mut best: Option<u64> = None;
+
+    while y != 0 {
+        let term = x / y;
+        (x, y) = (y, x - term * y);
+        (h_prev, h) = (h, term.saturating_mul(h).saturating_add(h_prev));
+        (k_prev, k) = (k, term.saturating_mul(k).saturating_add(k_prev));
+        let _ = (h_prev, h);
+        if k >= modulus {
+            break;
+        }
+        for mult in 1..=max_multiplier {
+            let r = k.saturating_mul(mult);
+            if r < 2 {
+                continue;
+            }
+            if r >= modulus {
+                break;
+            }
+            if mod_pow(a, r, modulus) != 1 {
+                continue;
+            }
+            // Integer form of |m/precision - s/r| <= 1/precision, which is
+            // |m*r - s*precision| <= r. Avoids any floating-point slack.
+            let num = measured.saturating_mul(r);
+            let s = (num + precision / 2) / precision;
+            // s = 0 says only "the phase is near zero", which is consistent with
+            // every period and so validates none of them. Requiring a non-zero
+            // numerator costs nothing real: a genuine peak has s in 1..r.
+            if s == 0 {
+                continue;
+            }
+            let lhs = s.saturating_mul(precision);
+            let diff = if num > lhs { num - lhs } else { lhs - num };
+            if diff <= r {
+                best = Some(best.map_or(r, |b: u64| b.min(r)));
+            }
+        }
+    }
+    best
+}

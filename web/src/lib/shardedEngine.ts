@@ -306,6 +306,97 @@ export class ShardedEngine {
   }
 
   /**
+   * Modular-exponentiation oracle across every slice, in parallel.
+   *
+   * Costs nothing in communication. The counting register lives in the high index
+   * bits, so a shard id is the top of `x`, and `a^x = a^(offset) · a^(x_low)`
+   * splits cleanly — each shard derives its own starting power from its index and
+   * permutes only its local work register.
+   *
+   * Requires the shard boundary to fall inside the counting register, so the work
+   * register stays local.
+   */
+  async applyModexp(a: number, modulus: number, workQubits: number): Promise<void> {
+    if (workQubits > this.layout.localQubits) {
+      throw new Error(
+        `work register of ${workQubits} qubits does not fit in a ${this.layout.localQubits}-qubit slice`,
+      );
+    }
+    await Promise.all(
+      this.handles.map((h) => h.send({ kind: 'modexpLocal', a, modulus, workQubits })),
+    );
+  }
+
+  /**
+   * The counting register's distribution, with the work register traced out.
+   *
+   * Also communication-free, and the concatenation order is not arbitrary: a
+   * shard id *is* the top of the counting register, so slices in index order are
+   * already in ascending `x`.
+   */
+  async registerMarginal(workQubits: number): Promise<Float64Array> {
+    const parts = await Promise.all(
+      this.handles.map((h) =>
+        h.send<Float64Array>({ kind: 'registerMarginal', lowQubits: workQubits }),
+      ),
+    );
+    const out = new Float64Array(parts.reduce((n, p) => n + p.length, 0));
+    let at = 0;
+    for (const p of parts) {
+      out.set(p, at);
+      at += p.length;
+    }
+    return out;
+  }
+
+  /**
+   * Inverse QFT over the counting register (the high `count` qubits).
+   *
+   * The forward transform is `swaps ∘ core`, so the inverse is `core⁻¹ ∘ swaps`
+   * and the swaps come *first* — omitting them would permute the input, not the
+   * output. Conjugating by the swap network relabels qubits, so running the core
+   * on reversed indices moves the permutation to the end, where dropping it is a
+   * pure relabelling of the readout. Worth doing here: those swaps straddle the
+   * shard boundary and each decomposes into three CNOTs.
+   *
+   * `window` truncates the small-angle controlled phases (an approximate QFT).
+   * Those contribute least to the result and, on the high qubits, are exactly the
+   * expensive cross-shard ones.
+   *
+   * Returns the gate count and how many of them had to cross a boundary.
+   */
+  async inverseQft(
+    work: number,
+    count: number,
+    window = Infinity,
+  ): Promise<{ gates: number; crossShard: number }> {
+    // Reversed labels, so the bit reversal lands on the readout instead.
+    const q = (j: number) => work + count - 1 - j;
+    const boundary = this.layout.localQubits;
+    let gates = 0;
+    let crossShard = 0;
+    for (let j = 0; j < count; j++) {
+      for (let k = 0; k < j; k++) {
+        if (j - k > window) continue;
+        await this.applyGate('cp', [q(k), q(j)], [-Math.PI / 2 ** (j - k)]);
+        gates++;
+        if (q(j) >= boundary) crossShard++;
+      }
+      await this.applyGate('h', [q(j)]);
+      gates++;
+      if (q(j) >= boundary) crossShard++;
+    }
+    return { gates, crossShard };
+  }
+
+  /** Reverse the low `count` bits — the readout relabelling the skipped swaps imply. */
+  static reverseBits(x: number, count: number): number {
+    let out = 0;
+    for (let b = 0; b < count; b++) if ((x >> b) & 1) out |= 1 << (count - 1 - b);
+    return out;
+  }
+
+  /**
    * Sample the global distribution exactly, without ever forming it: pick a
    * shard in proportion to its probability mass, then sample inside that slice.
    */

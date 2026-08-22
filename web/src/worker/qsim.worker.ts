@@ -5,6 +5,7 @@
 
 import init, {
   Simulator,
+  multiplicativeOrder,
   canAllocate,
   engineVersion,
   fullArrayQubitLimit,
@@ -13,8 +14,18 @@ import init, {
   memoryBytesRequired,
 } from 'qsim';
 import wasmUrl from 'qsim/qsim_bg.wasm?url';
+import {
+  candidateBase,
+  factorsFromPeriod,
+  gcd,
+  periodFromPhase,
+  unitFromSeed,
+} from '../lib/shor';
 import type {
   EngineInfo,
+  PhaseDistribution,
+  ShorAttempt,
+  ShorResult,
   PlaygroundState,
   ProbeOptions,
   ProbePoint,
@@ -597,6 +608,183 @@ function runTests(emit: (p: Progress) => void): TestResult {
 }
 
 // ---------------------------------------------------------------------------
+// Shor's algorithm
+// ---------------------------------------------------------------------------
+
+/**
+ * Inverse QFT over the counting register (qubits `work .. work + count`).
+ *
+ * The forward transform is a Hadamard per qubit with descending controlled
+ * phases, then a bit reversal. The inverse runs that sequence backwards with the
+ * angles negated — so the swaps come first, the qubit loop ascends instead of
+ * descending, and the controlled phases within each step also reverse.
+ */
+function inverseQft(sim: Simulator, work: number, count: number): number {
+  const q = (j: number) => work + j;
+  let gates = 0;
+  for (let i = 0; i < count >> 1; i++) {
+    sim.applyGate('swap', new Uint32Array([q(i), q(count - 1 - i)]), new Float64Array([]));
+    gates++;
+  }
+  for (let j = 0; j < count; j++) {
+    for (let k = 0; k < j; k++) {
+      const angle = -Math.PI / 2 ** (j - k);
+      sim.applyGate('cp', new Uint32Array([q(k), q(j)]), new Float64Array([angle]));
+      gates++;
+    }
+    sim.applyGate('h', new Uint32Array([q(j)]), new Float64Array([]));
+    gates++;
+  }
+  return gates;
+}
+
+/**
+ * Keep only the values carrying real probability.
+ *
+ * A 16-qubit counting register has 65,536 outcomes but the post-QFT distribution
+ * concentrates on roughly `r` peaks, so plotting every value would be almost all
+ * zeros. Reports the retained coverage so the trimming is visible rather than
+ * silent.
+ */
+function trimDistribution(
+  marginal: Float64Array,
+  countQubits: number,
+  period: number | null,
+  keep = 48,
+): PhaseDistribution {
+  const idx = Array.from(marginal.keys()).filter((i) => marginal[i] > 1e-6);
+  idx.sort((i, j) => marginal[j] - marginal[i]);
+  const chosen = idx.slice(0, keep).sort((i, j) => i - j);
+  let coverage = 0;
+  for (const i of chosen) coverage += marginal[i];
+  return {
+    countQubits,
+    x: chosen,
+    probability: chosen.map((i) => marginal[i]),
+    peakSpacing: period ? 2 ** countQubits / period : null,
+    coverage,
+  };
+}
+
+/** Draw one outcome from an exact distribution — a faithful measurement. */
+function sampleDistribution(marginal: Float64Array, seed: number): number {
+  const r = unitFromSeed(seed);
+  let acc = 0;
+  for (let i = 0; i < marginal.length; i++) {
+    acc += marginal[i];
+    if (r < acc) return i;
+  }
+  return marginal.length - 1;
+}
+
+function runShor(
+  modulus: number,
+  workQubits: number,
+  countQubits: number,
+  maxAttempts: number,
+  seed: number,
+  coprimeOnly: boolean,
+  emit: (p: Progress) => void,
+): ShorResult {
+  const started = performance.now();
+  const attempts: ShorAttempt[] = [];
+  let distribution: PhaseDistribution | null = null;
+  let factors: [number, number] | null = null;
+  let gates = 0;
+
+  for (let attempt = 1; attempt <= maxAttempts && !factors; attempt++) {
+    const t0 = performance.now();
+    const a = candidateBase(modulus, seed, attempt, coprimeOnly);
+
+    // Free factor: if a shares a divisor with N there is nothing to compute.
+    const shared = gcd(a, modulus);
+    if (shared > 1) {
+      const rec: ShorAttempt = {
+        attempt,
+        a,
+        classicalHit: true,
+        measured: null,
+        phase: null,
+        period: null,
+        factors: [shared, modulus / shared],
+        outcome: `gcd(${a}, ${modulus}) = ${shared} — a lucky guess, no quantum work needed`,
+        ms: performance.now() - t0,
+      };
+      attempts.push(rec);
+      emit({ kind: 'shor', stage: `attempt ${attempt}: classical hit`, attempt: rec });
+      factors = rec.factors;
+      break;
+    }
+
+    emit({ kind: 'shor', stage: `attempt ${attempt}: period of ${a}^x mod ${modulus}` });
+
+    const sim = new Simulator(workQubits + countQubits);
+    try {
+      // Work register starts at |1>; counting register in uniform superposition.
+      sim.applyGate('x', new Uint32Array([0]), new Float64Array([]));
+      gates++;
+      for (let q = workQubits; q < workQubits + countQubits; q++) {
+        sim.applyGate('h', new Uint32Array([q]), new Float64Array([]));
+        gates++;
+      }
+      sim.applyModexp(a, modulus, workQubits);
+      gates += inverseQft(sim, workQubits, countQubits);
+
+      const marginal = sim.registerMarginal(workQubits);
+      const measured = sampleDistribution(marginal, seed + attempt * 7919);
+      const precision = 2 ** countQubits;
+      const period = periodFromPhase(measured, precision, a, modulus);
+
+      if (!distribution) {
+        distribution = trimDistribution(marginal, countQubits, period);
+      }
+
+      let outcome: string;
+      if (period === null) {
+        outcome = `no valid period from phase ${measured}/${precision}`;
+      } else {
+        const res = factorsFromPeriod(period, a, modulus);
+        factors = res.factors;
+        outcome = res.factors
+          ? `period ${period} → ${res.factors[0]} × ${res.factors[1]}`
+          : `period ${period} but ${res.reason}`;
+      }
+
+      const rec: ShorAttempt = {
+        attempt,
+        a,
+        classicalHit: false,
+        measured,
+        phase: measured / precision,
+        period,
+        factors,
+        outcome,
+        ms: performance.now() - t0,
+      };
+      attempts.push(rec);
+      emit({ kind: 'shor', stage: `attempt ${attempt} done`, attempt: rec });
+    } finally {
+      sim.free();
+    }
+  }
+
+  const order = multiplicativeOrder(attempts[attempts.length - 1]?.a ?? 2, modulus);
+  return {
+    modulus,
+    factorisation: '',
+    workQubits,
+    countQubits,
+    totalQubits: workQubits + countQubits,
+    factors,
+    attempts,
+    distribution,
+    trueOrder: order < 0 ? null : order,
+    gates,
+    totalMs: performance.now() - started,
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Playground — one long-lived simulator the UI mutates gate by gate
 // ---------------------------------------------------------------------------
 
@@ -631,6 +819,16 @@ function handle(req: Request): unknown {
       return runProbe(req.options, emit);
     case 'runTests':
       return runTests(emit);
+    case 'runShor':
+      return runShor(
+        req.modulus,
+        req.workQubits,
+        req.countQubits,
+        req.maxAttempts,
+        req.seed,
+        req.coprimeOnly,
+        emit,
+      );
     case 'pgInit':
       playground?.free();
       playground = new Simulator(req.nQubits);
