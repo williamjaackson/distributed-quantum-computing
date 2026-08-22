@@ -2,14 +2,18 @@
 
 use crate::complex::C;
 
-/// Hard ceiling on qubit count, set by pointer width.
+/// Hard ceiling on qubit count for a *single* state vector.
 ///
-/// On wasm32 `usize` is 32 bits and the whole address space is 4 GiB, so
-/// `2^n * size_of::<C>()` (16 bytes) must stay under that: 2^28 * 16 == 2^32,
-/// which overflows exactly, leaving 27 as the largest representable size.
-/// Reaching even 27 depends on the browser actually granting ~2 GiB, which is
-/// what the capacity probe measures.
-pub const MAX_QUBITS: u32 = if usize::BITS == 32 { 27 } else { 32 };
+/// The binding limit on wasm32 is not the 4 GiB address space but `isize::MAX`:
+/// Rust refuses any single allocation of 2^31 bytes or more. At 16 bytes per
+/// amplitude, 27 qubits needs exactly 2^31 bytes — one byte over — so it is
+/// refused instantly, without the heap even growing. 26 qubits (1 GiB) is the
+/// largest that fits.
+///
+/// This caps one `Vec`, not one machine. The total is not the problem: a single
+/// module happily holds several 1 GiB slices at once. Use [`crate::shard`] to
+/// spread a register across module instances and let RAM be the limit instead.
+pub const MAX_QUBITS: u32 = if usize::BITS == 32 { 26 } else { 32 };
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum QsimError {
@@ -27,6 +31,12 @@ pub enum QsimError {
     TooLargeForOperation { n_qubits: u32, limit: u32 },
     /// A parameterised gate was invoked without enough angles.
     MissingParams { gate: String, expected: usize, got: usize },
+    /// Shard index outside the configured shard count.
+    InvalidShard { index: u32, shards: u32 },
+    /// Exchange block index past the end of the shard.
+    BlockOutOfRange { block: usize, blocks: usize },
+    /// Gate cannot run as an elementwise shard pairing (SWAP must be decomposed).
+    NotPairable(String),
 }
 
 impl std::fmt::Display for QsimError {
@@ -58,6 +68,16 @@ impl std::fmt::Display for QsimError {
             QsimError::MissingParams { gate, expected, got } => write!(
                 f,
                 "gate {gate} expects {expected} parameter(s), got {got}"
+            ),
+            QsimError::InvalidShard { index, shards } => {
+                write!(f, "shard {index} out of range for {shards} shard(s)")
+            }
+            QsimError::BlockOutOfRange { block, blocks } => {
+                write!(f, "exchange block {block} out of range ({blocks} blocks)")
+            }
+            QsimError::NotPairable(g) => write!(
+                f,
+                "gate {g} cannot run as a shard pairing; decompose it first"
             ),
         }
     }

@@ -101,11 +101,25 @@ pub fn measure(sv: &mut StateVector, qubit: u32, rng: &mut Rng) -> Result<u8, Qs
 /// time with no buffer proportional to the state, so it works at any qubit count.
 /// Returns `(basis_state_index, count)` pairs for the states that were hit.
 pub fn sample(sv: &StateVector, shots: u32, seed: u64) -> Vec<(u64, u32)> {
-    if shots == 0 {
+    sample_unnormalised(sv.amps(), shots, seed)
+}
+
+/// Sample amplitudes whose squared magnitudes need not sum to 1.
+///
+/// A shard holds only part of the global state, so its slice carries less than
+/// unit probability. Drawing uniforms in `[0, mass)` rather than `[0, 1)` makes
+/// the draw exact within the slice, which is what lets the orchestrator sample a
+/// sharded state by first choosing a shard in proportion to its mass.
+pub fn sample_unnormalised(amps: &[C], shots: u32, seed: u64) -> Vec<(u64, u32)> {
+    if shots == 0 || amps.is_empty() {
+        return Vec::new();
+    }
+    let mass: f64 = amps.iter().map(|a| a.norm_sqr()).sum();
+    if mass <= 0.0 {
         return Vec::new();
     }
     let mut rng = Rng::new(seed);
-    let mut draws: Vec<f64> = (0..shots).map(|_| rng.next_f64()).collect();
+    let mut draws: Vec<f64> = (0..shots).map(|_| rng.next_f64() * mass).collect();
     draws.sort_unstable_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
 
     let mut out: Vec<(u64, u32)> = Vec::new();
@@ -113,7 +127,7 @@ pub fn sample(sv: &StateVector, shots: u32, seed: u64) -> Vec<(u64, u32)> {
     let mut d = 0usize;
     let mut last_hit = 0u64;
 
-    for (i, a) in sv.amps().iter().enumerate() {
+    for (i, a) in amps.iter().enumerate() {
         if d >= draws.len() {
             break;
         }
