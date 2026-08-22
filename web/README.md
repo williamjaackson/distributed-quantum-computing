@@ -40,8 +40,40 @@ long-circuit unitarity and sampling convergence against expected values taken
 from the physics. Same WASM build the benchmark uses, so a pass here says
 something about the shipped artifact.
 
+**Sharded capacity** spreads one register across many workers, each owning a
+26-qubit slice in its own WASM module, and walks upward. This is what gets past
+the single-module ceiling: 26 qubits in one module, **29** across eight.
+
 **Playground** applies gates one at a time to a small register, with a live
 probability distribution and amplitude table.
+
+## The sharded orchestrator
+
+`src/lib/shardedEngine.ts` drives `src/worker/shard.worker.ts`, one worker per
+slice. Every orchestration *decision* — which shards take part, which pair with
+which, what the control masks are — comes from `planGate` in the engine, so the
+subtle part is covered by Rust tests rather than reimplemented here. This side
+only executes.
+
+The orchestrator loads its own planning-only WASM instance (no slice allocated,
+so the cost is the 54 KB module) rather than round-tripping to a worker per gate.
+
+Exchanges move blocks with transferable `ArrayBuffer`s, so the relay through the
+main thread is an ownership move rather than a copy — the only real copies are
+WASM-to-JS and JS-to-WASM inside the workers. Nothing here needs
+`SharedArrayBuffer`, which means no COOP/COEP headers and no restrictions on
+where this can be hosted.
+
+**The probe uses a memory budget rather than probing until failure.** Overshooting
+RAM does not fail gracefully: the browser kills the tab and takes the results
+with it (measured — 8 GiB succeeded, 16 GiB killed the renderer). The default
+comes from `navigator.deviceMemory`, which is deliberately coarse and capped at
+8, so it reads as a conservative lower bound.
+
+Views over WASM memory are re-derived whenever the buffer identity changes.
+Growing WASM memory replaces the `ArrayBuffer` and detaches every view over the
+old one, and any call passing a `Vec` across the boundary can allocate — so
+caching a view for the worker's lifetime would be a latent crash.
 
 ## Charts
 

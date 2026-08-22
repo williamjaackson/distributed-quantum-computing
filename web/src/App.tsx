@@ -3,12 +3,14 @@ import { ThemeToggle } from './components/ThemeToggle';
 import { useEngine } from './lib/useEngine';
 import { CapacityPanel } from './panels/CapacityPanel';
 import { PlaygroundPanel } from './panels/PlaygroundPanel';
+import { ShardedPanel } from './panels/ShardedPanel';
 import { TestsPanel } from './panels/TestsPanel';
 
-type Tab = 'capacity' | 'tests' | 'playground';
+type Tab = 'capacity' | 'sharded' | 'tests' | 'playground';
 
 const TABS: { id: Tab; label: string }[] = [
   { id: 'capacity', label: 'Capacity benchmark' },
+  { id: 'sharded', label: 'Sharded capacity' },
   { id: 'tests', label: 'Engine tests' },
   { id: 'playground', label: 'Playground' },
 ];
@@ -66,6 +68,7 @@ export function App() {
       {!info && !error && <p className="progress-line">Loading engine…</p>}
 
       {client && info && tab === 'capacity' && <CapacityPanel client={client} info={info} />}
+      {info && tab === 'sharded' && <ShardedPanel />}
       {client && info && tab === 'tests' && <TestsPanel client={client} />}
       {client && info && tab === 'playground' && <PlaygroundPanel client={client} />}
     </div>
