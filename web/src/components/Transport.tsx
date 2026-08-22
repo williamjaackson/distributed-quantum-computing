@@ -1,0 +1,142 @@
+/**
+ * Playback controls, and the one line that says what the engine just did.
+ *
+ * The step description and the literal `applyGate(...)` call sit directly above
+ * the buttons rather than off in a log: the whole point of stepping is to tie a
+ * change on screen to the one call that caused it.
+ */
+import { SPEEDS } from '../lib/usePlayer';
+import { describe, engineCall } from '../lib/format';
+import type { Step } from '../lib/types';
+
+interface TransportProps {
+  index: number;
+  last: number;
+  playing: boolean;
+  speed: number;
+  atStart: boolean;
+  atEnd: boolean;
+  step: Step | null;
+  wires: string[];
+  onSeek: (i: number) => void;
+  onStep: (delta: number) => void;
+  onToggle: () => void;
+  onStart: () => void;
+  onEnd: () => void;
+  onSpeed: (s: number) => void;
+}
+
+export function Transport(props: TransportProps) {
+  const { index, last, playing, speed, atStart, atEnd, step, wires } = props;
+
+  return (
+    <div className="transport">
+      <div className="now">
+        <span className="now-step">
+          step {index} / {last}
+        </span>
+        {step?.stage && <span className="now-stage">{step.stage}</span>}
+        <span className="now-note">
+          {step ? describe(step, wires) : 'Register initialised to |0…0⟩'}
+        </span>
+        {step?.conditional && <span className="now-cond">because {step.conditional}</span>}
+        <code className="now-call">{step ? engineCall(step) : 'new Simulator(n)'}</code>
+      </div>
+
+      <div className="controls">
+        <button className="btn" onClick={props.onStart} disabled={atStart} title="Start (Home)">
+          <Icon shape="start" />
+        </button>
+        <button className="btn" onClick={() => props.onStep(-1)} disabled={atStart} title="Back (←)">
+          <Icon shape="prev" />
+        </button>
+        <button
+          className="btn btn-primary"
+          onClick={props.onToggle}
+          disabled={last === 0}
+          title="Play / pause (space)"
+        >
+          <Icon shape={playing ? 'pause' : 'play'} />
+        </button>
+        <button className="btn" onClick={() => props.onStep(1)} disabled={atEnd} title="Forward (→)">
+          <Icon shape="next" />
+        </button>
+        <button className="btn" onClick={props.onEnd} disabled={atEnd} title="End (End)">
+          <Icon shape="end" />
+        </button>
+
+        <input
+          className="scrub"
+          type="range"
+          min={0}
+          max={Math.max(1, last)}
+          step={1}
+          value={index}
+          disabled={last === 0}
+          aria-label="Timeline position"
+          onChange={(e) => props.onSeek(Number(e.target.value))}
+        />
+
+        <div className="speed">
+          <span>speed</span>
+          <div className="speed-buttons">
+            {SPEEDS.map((s) => (
+              <button
+                key={s}
+                aria-pressed={s === speed}
+                onClick={() => props.onSpeed(s)}
+                title={`${s}× — ${Math.round(700 / s)} ms per step`}
+              >
+                {s}×
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+type Shape = 'start' | 'prev' | 'play' | 'pause' | 'next' | 'end';
+
+function Icon({ shape }: { shape: Shape }) {
+  const common = { width: 14, height: 14, viewBox: '0 0 14 14', fill: 'currentColor' } as const;
+  switch (shape) {
+    case 'start':
+      return (
+        <svg {...common} aria-hidden>
+          <path d="M2 2h1.6v10H2zM12 2v10L4.8 7z" />
+        </svg>
+      );
+    case 'prev':
+      return (
+        <svg {...common} aria-hidden>
+          <path d="M11 2v10L4 7z" />
+        </svg>
+      );
+    case 'play':
+      return (
+        <svg {...common} aria-hidden>
+          <path d="M3.5 1.8 12 7l-8.5 5.2z" />
+        </svg>
+      );
+    case 'pause':
+      return (
+        <svg {...common} aria-hidden>
+          <path d="M3.4 2h2.6v10H3.4zM8 2h2.6v10H8z" />
+        </svg>
+      );
+    case 'next':
+      return (
+        <svg {...common} aria-hidden>
+          <path d="M3 2v10l7-5z" />
+        </svg>
+      );
+    case 'end':
+      return (
+        <svg {...common} aria-hidden>
+          <path d="M10.4 2H12v10h-1.6zM2 2v10l7.2-5z" />
+        </svg>
+      );
+  }
+}
