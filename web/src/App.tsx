@@ -11,7 +11,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { analyse, readRegister } from './lib/analysis';
 import type { Execution } from './lib/backend';
-import { engineLimits, loadWasm } from './lib/backend';
+import { engineLimitsIfReady, loadWasm } from './lib/backend';
 import { ceiling, runProgram } from './lib/runner';
 import { defaultValues } from './lib/inputs';
 import type { InputValue, InputValues, Readout, ReadoutContext, Timeline } from './lib/types';
@@ -165,7 +165,7 @@ export function App() {
   const view = viewById(viewId);
   const currentStep =
     timeline && frameIndex > 0 ? (timeline.steps[frameIndex - 1] ?? null) : null;
-  const limits = ready ? engineLimits() : null;
+  const limits = ready ? engineLimitsIfReady() : null;
 
   if (engineError) {
     return (
@@ -225,7 +225,7 @@ export function App() {
             <InputsPanel
               specs={program.inputs}
               values={values}
-              qubitCeiling={ceiling(execution, unlocked)}
+              qubitCeiling={ceiling(execution, unlocked, limits)}
               onChange={setValue}
             />
             <div className="field">

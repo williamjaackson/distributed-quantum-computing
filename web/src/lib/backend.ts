@@ -68,10 +68,13 @@ export interface SnapshotRequest {
 }
 
 let loading: Promise<void> | null = null;
+let loaded = false;
 
 /** Load the module once. Also what the shard orchestrator plans against. */
 export function loadWasm(): Promise<void> {
-  loading ??= init({ module_or_path: wasmUrl }).then(() => undefined);
+  loading ??= init({ module_or_path: wasmUrl }).then(() => {
+    loaded = true;
+  });
   return loading;
 }
 
@@ -84,12 +87,27 @@ export interface EngineLimits {
   maxShardQubits: number;
 }
 
+/**
+ * What this build can do, read from the engine itself.
+ *
+ * Throws before [`loadWasm`] resolves rather than returning a plausible-looking
+ * default: these numbers decide how large a register the UI will offer, and a
+ * guessed one would be wrong in exactly the direction that matters.
+ */
 export function engineLimits(): EngineLimits {
+  if (!loaded) {
+    throw new Error('engineLimits() called before loadWasm() resolved');
+  }
   return {
     maxWholeState: maxQubits(),
     fullArrayLimit: fullArrayQubitLimit(),
     maxShardQubits: maxShardQubits(),
   };
+}
+
+/** The limits, or null while the module is still loading. */
+export function engineLimitsIfReady(): EngineLimits | null {
+  return loaded ? engineLimits() : null;
 }
 
 export interface ShardLayout {

@@ -18,8 +18,8 @@
  *   kilobytes a frame instead of megabytes, and it is what lets the register go
  *   as far as the engine can take it.
  */
-import type { Backend, Execution } from './backend';
-import { createBackend, engineLimits, TOP_K } from './backend';
+import type { Backend, EngineLimits, Execution } from './backend';
+import { createBackend, engineLimits, loadWasm, TOP_K } from './backend';
 import { GATE_CONTROLS, GATE_PARAMS } from './steps';
 import type { Classical, Frame, InputValues, Program, Step, Timeline } from './types';
 
@@ -43,8 +43,8 @@ export const LINK_BUDGET = 1.5e8;
 /** Backstop against a program whose generator never terminates. */
 export const MAX_STEPS = 2048;
 
-export function keepAmplitudes(nQubits: number): boolean {
-  return nQubits <= Math.min(AMPS_QUBIT_LIMIT, engineLimits().fullArrayLimit);
+export function keepAmplitudes(nQubits: number, limits: EngineLimits): boolean {
+  return nQubits <= Math.min(AMPS_QUBIT_LIMIT, limits.fullArrayLimit);
 }
 
 export function computeLinks(nQubits: number): boolean {
@@ -71,10 +71,20 @@ export const INTERACTIVE_QUBITS = 22;
  */
 export const SHARDED_CEILING = 30;
 
-/** Largest register the visualiser will attempt. */
-export function ceiling(execution: Execution, unlocked: boolean): number {
-  if (!unlocked) return INTERACTIVE_QUBITS;
-  const limits = engineLimits();
+/**
+ * Largest register the visualiser will attempt.
+ *
+ * `limits` is passed in rather than read here, because the engine's own numbers
+ * are only knowable once the module has loaded and this is called during the
+ * first render. A null `limits` means "not known yet", which resolves to the
+ * interactive ceiling — the one value that is safe without asking the engine.
+ */
+export function ceiling(
+  execution: Execution,
+  unlocked: boolean,
+  limits: EngineLimits | null,
+): number {
+  if (!unlocked || !limits) return INTERACTIVE_QUBITS;
   return execution === 'whole' ? limits.maxWholeState : SHARDED_CEILING;
 }
 
@@ -126,13 +136,16 @@ export async function runProgram(
   options: RunOptions,
 ): Promise<Timeline> {
   const { execution, unlocked, onProgress, cancelled } = options;
+  // Every limit below comes from the engine, so the module has to be up first.
+  await loadWasm();
+  const limits = engineLimits();
   const requested = program.qubits(values);
-  const max = ceiling(execution, unlocked);
+  const max = ceiling(execution, unlocked, limits);
   const nQubits = Math.max(1, Math.min(max, requested));
   const wireLabels =
     program.wireLabels?.(values) ?? Array.from({ length: nQubits }, (_, i) => `q${i}`);
 
-  const want = { amps: keepAmplitudes(nQubits), links: computeLinks(nQubits) };
+  const want = { amps: keepAmplitudes(nQubits, limits), links: computeLinks(nQubits) };
   const steps: Step[] = [];
   const frames: Frame[] = [];
   const bits: Record<string, number> = {};

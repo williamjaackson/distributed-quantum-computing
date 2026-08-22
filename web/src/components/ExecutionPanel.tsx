@@ -50,7 +50,7 @@ export function ExecutionPanel({
   limits,
 }: Props) {
   const chosen = MODES.find((m) => m.value === execution) ?? MODES[0];
-  const cap = ceiling(execution, unlocked);
+  const cap = ceiling(execution, unlocked, limits);
   return (
     <section className="card">
       <h2 className="card-title">Execution</h2>
@@ -81,8 +81,9 @@ export function ExecutionPanel({
             ? `Ceiling is now ${cap} qubits${
                 limits ? ` (${formatBytes(2 ** cap * 16)} of state)` : ''
               }. A step costs a pass over the state per qubit, so expect a wait rather than playback.`
-            : `Ceiling is ${INTERACTIVE_QUBITS} qubits — the last size where a step is still about
-               60 ms. Turn this on to reach ${ceiling(execution, true)}.`}
+            : `Ceiling is ${INTERACTIVE_QUBITS} qubits — the last size where a step is still about 60 ms.${
+                limits ? ` Turn this on to reach ${ceiling(execution, true, limits)}.` : ''
+              }`}
         </span>
       </div>
 
@@ -120,8 +121,8 @@ export function ExecutionPanel({
         <p className="note">
           This build: {limits.maxWholeState} qubits in one module ({formatBytes(2 ** limits.maxWholeState * 16)}),
           full arrays out of WASM to {limits.fullArrayLimit}, {limits.maxShardQubits} qubits a shard.
-          Sharded runs are capped at {ceiling('sharded', true)} qubits here as a guard rail, not by
-          the engine — past that the limit is the machine's memory.
+          Sharded runs are capped at {ceiling('sharded', true, limits)} qubits here as a guard
+          rail, not by the engine — past that the limit is the machine's memory.
         </p>
       )}
     </section>
