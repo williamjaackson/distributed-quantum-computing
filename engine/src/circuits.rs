@@ -267,3 +267,94 @@ pub fn multiplicative_order(a: u64, modulus: u64) -> Option<u64> {
     }
     None
 }
+
+/// Largest period a counting register of `count_qubits` can resolve.
+///
+/// Continued fractions pin `s/r` down uniquely when `2^t > 2r²`, so the reach
+/// grows only as the *square root* of the register. This is the real constraint on
+/// Shor's algorithm and the reason the counting register conventionally gets twice
+/// the work register rather than the same.
+pub fn resolvable_period(count_qubits: u32) -> u64 {
+    ((2f64.powi(count_qubits as i32)) / 2.0).sqrt() as u64
+}
+
+/// Recover a period from a measured phase by continued fractions.
+///
+/// The measurement gives `m` with `m / precision ≈ s / r`. Expanding that and
+/// testing convergent denominators finds `r`, and since `a^r ≡ 1 mod N` is
+/// checkable the result verifies itself.
+///
+/// This lives in Rust deliberately. It first shipped as TypeScript with no tests
+/// and was wrong in a way that looked like success: the multiplier used to handle
+/// `gcd(s, r) > 1` was unbounded, and because the first convergent of any
+/// `m < precision` has denominator 1, the loop degenerated into testing
+/// `r = 1, 2, 3, …` until `a^r ≡ 1`. That is a classical brute-force order search.
+/// It ignored the measurement completely — every phase returned the same period —
+/// and "factored" numbers whose order the register could not possibly resolve.
+///
+/// Two constraints prevent that, and both are covered by tests below:
+///
+/// * `max_multiplier` is bounded, so a denominator of 1 can never become a search.
+/// * the period must *explain* the measurement — some `s/r` with `s >= 1` within
+///   one phase step of `m / precision`. Without it a large multiple of the true
+///   order passes, which is a valid period but usually splits nothing; and
+///   without the `s >= 1` part, "the phase is near zero" would validate any
+///   period at all.
+///
+/// The smallest surviving candidate wins, since `a^(r/2)` only splits `N` when `r`
+/// is the true order rather than a multiple of it.
+pub fn period_from_phase(
+    measured: u64,
+    precision: u64,
+    a: u64,
+    modulus: u64,
+    max_multiplier: u64,
+) -> Option<u64> {
+    if measured == 0 || precision == 0 || modulus < 2 {
+        return None;
+    }
+    let (mut x, mut y) = (measured, precision);
+    // Convergent recurrence: h_i = a_i h_{i-1} + h_{i-2}, likewise for k.
+    let (mut h_prev, mut h) = (0u64, 1u64);
+    let (mut k_prev, mut k) = (1u64, 0u64);
+    let mut best: Option<u64> = None;
+
+    while y != 0 {
+        let term = x / y;
+        (x, y) = (y, x - term * y);
+        (h_prev, h) = (h, term.saturating_mul(h).saturating_add(h_prev));
+        (k_prev, k) = (k, term.saturating_mul(k).saturating_add(k_prev));
+        let _ = (h_prev, h);
+        if k >= modulus {
+            break;
+        }
+        for mult in 1..=max_multiplier {
+            let r = k.saturating_mul(mult);
+            if r < 2 {
+                continue;
+            }
+            if r >= modulus {
+                break;
+            }
+            if mod_pow(a, r, modulus) != 1 {
+                continue;
+            }
+            // Integer form of |m/precision - s/r| <= 1/precision, which is
+            // |m*r - s*precision| <= r. Avoids any floating-point slack.
+            let num = measured.saturating_mul(r);
+            let s = (num + precision / 2) / precision;
+            // s = 0 says only "the phase is near zero", which is consistent with
+            // every period and so validates none of them. Requiring a non-zero
+            // numerator costs nothing real: a genuine peak has s in 1..r.
+            if s == 0 {
+                continue;
+            }
+            let lhs = s.saturating_mul(precision);
+            let diff = if num > lhs { num - lhs } else { lhs - num };
+            if diff <= r {
+                best = Some(best.map_or(r, |b: u64| b.min(r)));
+            }
+        }
+    }
+    best
+}

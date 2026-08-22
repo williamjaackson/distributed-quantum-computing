@@ -389,6 +389,22 @@ pub fn multiplicative_order(a: f64, modulus: f64) -> i32 {
     circuits::multiplicative_order(a as u64, modulus as u64).map_or(-1, |r| r as i32)
 }
 
+/// Recover a period from a measured phase. See [`circuits::period_from_phase`].
+///
+/// Returns -1 when no period explains the measurement, which is a normal outcome
+/// and not an error.
+#[wasm_bindgen(js_name = periodFromPhase)]
+pub fn period_from_phase(measured: f64, precision: f64, a: f64, modulus: f64) -> f64 {
+    circuits::period_from_phase(measured as u64, precision as u64, a as u64, modulus as u64, 8)
+        .map_or(-1.0, |r| r as f64)
+}
+
+/// Largest period a counting register of this size can resolve.
+#[wasm_bindgen(js_name = resolvablePeriod)]
+pub fn resolvable_period(count_qubits: u32) -> f64 {
+    circuits::resolvable_period(count_qubits) as f64
+}
+
 #[wasm_bindgen(js_name = greatestCommonDivisor)]
 pub fn greatest_common_divisor(a: f64, b: f64) -> f64 {
     circuits::gcd(a as u64, b as u64) as f64

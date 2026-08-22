@@ -8,6 +8,11 @@
  * part actually is.
  */
 
+import {
+  periodFromPhase as wasmPeriodFromPhase,
+  resolvablePeriod as wasmResolvablePeriod,
+} from 'qsim';
+
 export function gcd(a: number, b: number): number {
   while (b !== 0) [a, b] = [b, a % b];
   return a;
@@ -102,73 +107,37 @@ export function planShor(availableQubits: number, countRatio = 2): ShorPlan | nu
 /**
  * Largest period a counting register of `countQubits` can resolve.
  *
- * Continued fractions pin down `s/r` uniquely when `2^t > 2r^2`, so the
- * resolvable period grows only as the square root of the register size. This is
- * the real constraint on Shor's algorithm, and it is why the counting register
- * conventionally gets twice the work register rather than the same.
+ * Delegates to the engine. See `periodFromPhase` below for why.
  */
 export function resolvablePeriod(countQubits: number): number {
-  return Math.floor(Math.sqrt(2 ** countQubits / 2));
+  return wasmResolvablePeriod(countQubits);
 }
 
 /**
  * Recover a period from a measured phase by continued fractions.
  *
- * The measurement gives `m` with `m / 2^t ≈ s / r`. Expanding that fraction and
- * testing convergent denominators finds `r`, and because `a^r ≡ 1 mod N` is
- * checkable the answer verifies itself.
+ * Delegates to the engine, where it is covered by tests, rather than being
+ * reimplemented here. That split is deliberate and was learned the hard way: this
+ * routine first shipped as TypeScript with no test runner in the project at all,
+ * and it was wrong in a way that looked like success — an unbounded multiplier
+ * turned it into a classical brute-force order search that ignored the
+ * measurement entirely and "factored" numbers no register could resolve.
  *
- * Two constraints keep this honest, and both were learned the hard way:
+ * The sharding planner is in Rust for exactly this reason, so that the browser
+ * side executes and never decides. This is the same rule applied to the piece
+ * that actually broke.
  *
- * `maxMultiplier` is bounded. When `gcd(s, r) > 1` the convergent lands on
- * `r / gcd(s, r)`, so trying a few multiples recovers the real period — but the
- * *first* convergent of any `m < 2^t` has denominator 1, so an unbounded multiple
- * search degenerates into testing `r = 1, 2, 3, …` until `a^r ≡ 1`. That is a
- * classical brute-force order search, it ignores the measurement completely, and
- * it will happily "factor" numbers the register could never resolve.
- *
- * The recovered period must also *explain* the measurement: some `s/r` has to sit
- * within one phase step of `m / 2^t`. Without that check a large multiple of the
- * true order can be accepted, which is a valid period but usually yields no
- * factor split.
- *
- * The smallest surviving candidate wins, since `a^(r/2)` is only useful when `r`
- * is the true order rather than a multiple of it.
+ * Returns null when no period explains the measurement, which is an ordinary
+ * outcome rather than an error.
  */
 export function periodFromPhase(
   measured: number,
   precision: number,
   a: number,
   modulus: number,
-  maxMultiplier = 8,
 ): number | null {
-  if (measured === 0) return null;
-  const phase = measured / precision;
-  let x = measured;
-  let y = precision;
-  // Convergent recurrence: h_i = a_i h_{i-1} + h_{i-2}, likewise for k.
-  let hPrev = 0;
-  let h = 1;
-  let kPrev = 1;
-  let k = 0;
-  const candidates: number[] = [];
-
-  while (y !== 0) {
-    const term = Math.floor(x / y);
-    [x, y] = [y, x - term * y];
-    [hPrev, h] = [h, term * h + hPrev];
-    [kPrev, k] = [k, term * k + kPrev];
-    if (k >= modulus) break;
-    for (let mult = 1; mult <= maxMultiplier; mult++) {
-      const r = k * mult;
-      if (r < 2) continue;
-      if (r >= modulus) break;
-      if (modPow(a, r, modulus) !== 1) continue;
-      const s = Math.round(phase * r);
-      if (Math.abs(phase - s / r) <= 1 / precision) candidates.push(r);
-    }
-  }
-  return candidates.length ? Math.min(...candidates) : null;
+  const r = wasmPeriodFromPhase(measured, precision, a, modulus);
+  return r < 0 ? null : r;
 }
 
 /**

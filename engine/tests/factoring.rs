@@ -181,3 +181,122 @@ fn inverse_qft(sim: &mut Simulator, work: u32, count: u32) {
         sim.apply_named("h", &[q(j)], &[]).unwrap();
     }
 }
+
+// -- period recovery -------------------------------------------------------
+//
+// This logic first shipped as untested TypeScript and was wrong in a way that
+// looked like success, so it is tested here in some depth.
+
+use qsim::circuits::{period_from_phase, resolvable_period};
+
+/// The ideal post-QFT peak for `s/r`: the counting value closest to `s·Q/r`.
+fn ideal_peak(s: u64, r: u64, precision: u64) -> u64 {
+    ((s * precision) as f64 / r as f64).round() as u64 % precision
+}
+
+#[test]
+fn garbage_measurements_are_rejected() {
+    // The regression that matters. A 9-qubit counting register resolves periods
+    // up to about 16; the order of 5 mod 988027 is 164340. Every measurement must
+    // be refused, because none of them can carry that period.
+    //
+    // The earlier unbounded version returned 164340 for *all* of these — it had
+    // found the order by classical brute force and never looked at the phase.
+    let (modulus, a, precision) = (988027u64, 5u64, 512u64);
+    assert_eq!(multiplicative_order(a, modulus), Some(164340));
+    assert!(resolvable_period(9) < 20, "9 qubits should resolve only tiny periods");
+    for measured in [1u64, 7, 100, 313, 430, 443, 511] {
+        assert_eq!(
+            period_from_phase(measured, precision, a, modulus, 8),
+            None,
+            "phase {measured}/{precision} cannot encode a period of 164340"
+        );
+    }
+}
+
+#[test]
+fn a_denominator_of_one_never_becomes_a_search() {
+    // Any m < precision makes the first continued-fraction term 0, so the first
+    // convergent denominator is always 1. Multiples of 1 must stay bounded by
+    // max_multiplier, or the routine turns into a classical order search.
+    let (modulus, a) = (8189u64, 3u64);
+    let order = multiplicative_order(a, modulus).unwrap();
+    assert!(order > 8, "the order must exceed max_multiplier for this to be meaningful");
+    // A phase with no useful information at all.
+    assert_eq!(period_from_phase(1, 8192, a, modulus, 8), None);
+}
+
+#[test]
+fn genuine_peaks_recover_the_period() {
+    // With an adequate register, every peak s/r must give back r.
+    for (modulus, a) in [(15u64, 7u64), (33, 28), (255, 7), (1023, 2)] {
+        let r = multiplicative_order(a, modulus).unwrap();
+        let count = (2.0 * (modulus as f64).log2()).ceil() as u32;
+        let precision = 1u64 << count;
+        assert!(
+            precision > 2 * r * r,
+            "N={modulus}: register too small for this test to be fair"
+        );
+        for s in 1..r.min(64) {
+            let m = ideal_peak(s, r, precision);
+            assert_eq!(
+                period_from_phase(m, precision, a, modulus, 8),
+                Some(r),
+                "N={modulus}, a={a}, s={s}: peak {m}/{precision} should give r={r}"
+            );
+        }
+    }
+}
+
+#[test]
+fn the_smallest_valid_period_wins() {
+    // N=33, a=28 has order 10. The convergents of 820/4096 include denominator 4,
+    // whose multiple 20 is also a valid period — but a^(20/2) = 1, which splits
+    // nothing, whereas a^(10/2) = 10 does. Preferring the smallest matters.
+    let r = period_from_phase(820, 4096, 28, 33, 8).unwrap();
+    assert_eq!(r, 10, "should prefer the true order over a multiple of it");
+    assert_eq!(mod_pow(28, 5, 33), 10, "a^(r/2) must not be 1 or N-1 to split");
+}
+
+#[test]
+fn a_period_must_explain_the_measurement() {
+    // A valid period that does not match the phase must be refused. r=4 is a real
+    // period of 7 mod 15, but a phase of 1/256 is nowhere near any s/4.
+    assert_eq!(multiplicative_order(7, 15), Some(4));
+    assert_eq!(period_from_phase(1, 256, 7, 15, 8), None);
+    // The genuine peaks for r=4 at precision 256 are multiples of 64.
+    for s in 1..4 {
+        assert_eq!(period_from_phase(s * 64, 256, 7, 15, 8), Some(4));
+    }
+}
+
+#[test]
+fn resolvable_period_tracks_the_square_root_of_the_register() {
+    // 2^t > 2r^2, so the reach is sqrt(2^t / 2) and each extra qubit buys only
+    // about 41% more period.
+    assert_eq!(resolvable_period(8), 11);
+    assert_eq!(resolvable_period(16), 181);
+    assert_eq!(resolvable_period(24), 2896);
+    for t in 4..30u32 {
+        let r = resolvable_period(t);
+        // `>=` rather than `>`: flooring the square root can land exactly on the
+        // bound (t = 5 gives r = 4 and 2r² = 32 = 2^5).
+        assert!(2u64.pow(t) >= 2 * r * r, "t={t}: {r} violates the bound it claims");
+    }
+}
+
+#[test]
+fn recovery_fails_when_the_register_is_too_small() {
+    // The honest counterpart to the test above: an order beyond the register's
+    // reach must not be recoverable, even from a perfect peak.
+    let (modulus, a) = (8189u64, 3u64);
+    let r = multiplicative_order(a, modulus).unwrap();
+    let precision = 1u64 << 13; // ratio 1: resolves ~64, but r is far larger
+    assert!(r > resolvable_period(13), "this test needs an out-of-reach order");
+    let recovered: Vec<Option<u64>> =
+        (1..8).map(|s| period_from_phase(ideal_peak(s, r, precision), precision, a, modulus, 8)).collect();
+    assert!(
+        recovered.iter().filter(|x| **x == Some(r)).count() < recovered.len(),
+        "an order of {r} should not be reliably recoverable from 13 qubits"
+    );
+}

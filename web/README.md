@@ -60,6 +60,11 @@ the work register.
 configuration cannot reach it, because the failure is otherwise silent: too small
 a register does not error, it simply never recovers a period.
 
+Both that and `periodFromPhase` **live in the engine**, not here — this module
+only delegates. The sharding planner is in Rust for the same reason, so the
+browser side executes and never decides, and the routine below is why that rule
+matters.
+
 An earlier version of this claimed ratio 1 reached 8189 on 26 qubits. **That was
 wrong, and the cause is worth recording.** The post-processing tried multiples of
 each convergent denominator to handle the `gcd(s, r) > 1` case, but unbounded —
