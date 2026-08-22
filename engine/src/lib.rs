@@ -17,6 +17,7 @@ pub mod complex;
 pub mod dispatch;
 pub mod gates;
 pub mod measure;
+pub mod qaoa;
 pub mod rng;
 pub mod shard;
 pub mod state;
