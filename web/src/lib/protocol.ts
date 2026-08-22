@@ -97,6 +97,51 @@ export interface TestResult {
   totalMs: number;
 }
 
+/** One pass of Shor's algorithm with a particular base `a`. */
+export interface ShorAttempt {
+  attempt: number;
+  /** The base whose period is being found. */
+  a: number;
+  /** Set when gcd(a, N) > 1 handed us a factor with no quantum work at all. */
+  classicalHit: boolean;
+  /** Phase register outcome, or null if the attempt never got that far. */
+  measured: number | null;
+  /** measured / 2^t — the estimate of s/r. */
+  phase: number | null;
+  period: number | null;
+  factors: [number, number] | null;
+  outcome: string;
+  ms: number;
+}
+
+/** The counting register's exact distribution, for plotting. */
+export interface PhaseDistribution {
+  countQubits: number;
+  /** Only the values carrying meaningful probability. */
+  x: number[];
+  probability: number[];
+  /** Spacing between ideal peaks, 2^t / r, when the period is known. */
+  peakSpacing: number | null;
+  /** Total probability retained by the plotted values. */
+  coverage: number;
+}
+
+export interface ShorResult {
+  modulus: number;
+  factorisation: string;
+  workQubits: number;
+  countQubits: number;
+  totalQubits: number;
+  factors: [number, number] | null;
+  attempts: ShorAttempt[];
+  /** Distribution from the first attempt that ran the quantum circuit. */
+  distribution: PhaseDistribution | null;
+  /** Classical check of the period, for comparison only. */
+  trueOrder: number | null;
+  gates: number;
+  totalMs: number;
+}
+
 export interface PlaygroundState {
   nQubits: number;
   probabilities: number[];
@@ -110,6 +155,17 @@ export type Request =
   | { id: number; kind: 'info' }
   | { id: number; kind: 'probe'; options: ProbeOptions }
   | { id: number; kind: 'runTests' }
+  | {
+      id: number;
+      kind: 'runShor';
+      modulus: number;
+      workQubits: number;
+      countQubits: number;
+      maxAttempts: number;
+      seed: number;
+      /** Skip bases that hand over a factor classically, so the quantum path runs. */
+      coprimeOnly: boolean;
+    }
   | { id: number; kind: 'pgInit'; nQubits: number }
   | { id: number; kind: 'pgApply'; gate: string; qubits: number[]; params: number[] }
   | { id: number; kind: 'pgPrepare'; circuit: 'uniform' | 'bell' | 'ghz' | 'qft' }
@@ -132,7 +188,8 @@ export type RequestBody = DistributiveOmit<Request, 'id'>;
 
 export type Progress =
   | { kind: 'probe'; currentQubits: number; point?: ProbePoint; note?: string }
-  | { kind: 'tests'; group: TestGroup };
+  | { kind: 'tests'; group: TestGroup }
+  | { kind: 'shor'; stage: string; attempt?: ShorAttempt };
 
 export type Response =
   | { id: number; type: 'ok'; data: unknown }

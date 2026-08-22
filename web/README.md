@@ -35,10 +35,38 @@ microseconds, and near capacity one layer already takes seconds. Reports the
 stop reason explicitly, including when it stopped on the time budget rather than
 the real ceiling, so a truncated run never reads as a complete one.
 
-**Engine tests** re-runs Bell, GHZ, QFT period-finding, Grover, teleportation,
-long-circuit unitarity and sampling convergence against expected values taken
-from the physics. Same WASM build the benchmark uses, so a pass here says
-something about the shipped artifact.
+**Algorithm tests** runs Shor's algorithm, factoring the largest number the qubit
+budget allows.
+
+Shor's is mostly classical — the only quantum step is finding the period of
+`a^x mod N`. `src/lib/shor.ts` holds the arithmetic (choosing a target, picking a
+base, continued fractions, gcd) and the worker runs the circuit: superpose the
+counting register, apply the modular-exponentiation oracle, inverse QFT, measure.
+
+The oracle is applied straight to the amplitude array rather than decomposed into
+gates. A gate-level modular multiplier costs thousands of Toffolis plus its own
+ancillas, which would dominate both the qubit budget and the runtime while
+teaching nothing about period finding — the part that is actually quantum.
+Grover's oracle is handled the same way.
+
+**The counting ratio, not the qubit total, decides how large a number fits.** The
+work register needs `n = ⌈log₂ N⌉`; the counting register gets `n × ratio` and
+sets the phase precision. So the budget goes as `n × (1 + ratio)`. Textbook Shor
+uses ratio 2, because recovering the period provably needs `2^t > N²` — but that
+bound is conservative, and testing small multiples of each continued-fraction
+convergent recovers the period even from a coarse estimate. Measured on 26
+qubits: ratio 2 reaches 255, ratio 1 reaches **8189 = 19 × 431** in one or two
+attempts. Hence the default is the aggressive end.
+
+Failed attempts are ordinary, not bugs: a period can come out odd, or `a^(r/2)`
+can be −1 mod N, and either yields nothing, so the algorithm retries with a new
+base. Bases sharing a factor with N are also skipped by default — gcd hands over
+a factor for free, which is legitimate Shor but for small N crowds out the
+quantum path entirely (half of all bases below 15 factor it classically).
+
+This replaces the earlier engine-test tab. The correctness suite still runs under
+`cargo test` (55 tests), and factoring exercises the QFT, the oracle and
+measurement end-to-end against an answer that is checkable by multiplication.
 
 **Sharded capacity** spreads one register across many workers, each owning a
 26-qubit slice in its own WASM module, and walks upward. This is what gets past

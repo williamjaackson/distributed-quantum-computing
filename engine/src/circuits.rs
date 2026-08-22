@@ -133,3 +133,119 @@ pub fn teleport(
     }
     Ok((m0, m1))
 }
+
+/// Greatest common divisor, for oracle validation and period post-processing.
+pub fn gcd(mut a: u64, mut b: u64) -> u64 {
+    while b != 0 {
+        let t = b;
+        b = a % b;
+        a = t;
+    }
+    a
+}
+
+/// Modular exponentiation, by square-and-multiply.
+pub fn mod_pow(mut base: u64, mut exp: u64, modulus: u64) -> u64 {
+    if modulus == 1 {
+        return 0;
+    }
+    let mut acc: u64 = 1;
+    base %= modulus;
+    while exp > 0 {
+        if exp & 1 == 1 {
+            acc = acc * base % modulus;
+        }
+        base = base * base % modulus;
+        exp >>= 1;
+    }
+    acc
+}
+
+/// Modular exponentiation oracle: |x>|y> -> |x>|y * a^x mod N>.
+///
+/// The work register occupies the low `work_qubits` index bits and the counting
+/// register sits above it, so a global index splits as
+/// `(x << work_qubits) | y`. Starting from |y = 1> this leaves
+/// |x>|a^x mod N>, whose period in x is the order of `a` — the quantity Shor's
+/// algorithm extracts.
+///
+/// Applied straight to the amplitude array rather than decomposed into gates.
+/// A gate-level modular multiplier costs a few thousand Toffolis plus its own
+/// ancilla registers, which would dominate the qubit budget and the runtime
+/// while teaching nothing about period finding — the part that is actually
+/// quantum. Grover's oracle is handled the same way, for the same reason.
+///
+/// Reversible because `y -> y * a^x mod N` is a bijection on `0..N` whenever
+/// `gcd(a, N) = 1`; values at or above `N` are untouched fixed points, since the
+/// work register is wider than the modulus in general.
+///
+/// One pass over the state: `a^x` advances by a single multiply per block rather
+/// than a fresh exponentiation.
+pub fn modexp_oracle(
+    sv: &mut StateVector,
+    a: u64,
+    modulus: u64,
+    work_qubits: u32,
+) -> Result<(), QsimError> {
+    if modulus < 2 {
+        return Err(QsimError::InvalidOracle(format!("modulus {modulus} must be at least 2")));
+    }
+    if work_qubits > sv.n_qubits() {
+        return Err(QsimError::InvalidOracle(format!(
+            "work register of {work_qubits} exceeds the {}-qubit state",
+            sv.n_qubits()
+        )));
+    }
+    let block = 1usize << work_qubits;
+    if (block as u64) < modulus {
+        return Err(QsimError::InvalidOracle(format!(
+            "work register of {work_qubits} qubits cannot hold values mod {modulus}"
+        )));
+    }
+    if gcd(a % modulus, modulus) != 1 {
+        return Err(QsimError::InvalidOracle(format!(
+            "a = {a} shares a factor with {modulus}, so the map is not reversible"
+        )));
+    }
+
+    let len = sv.len();
+    let blocks = len / block;
+    let m = (modulus as usize).min(block);
+
+    let mut scratch: Vec<C> = Vec::new();
+    scratch
+        .try_reserve_exact(m)
+        .map_err(|_| QsimError::OutOfMemory { requested: work_qubits, bytes: (m as u64) * 16 })?;
+    scratch.resize(m, C::ZERO);
+
+    // c tracks a^x mod N incrementally across blocks.
+    let mut c: u64 = 1 % modulus;
+    let a_mod = a % modulus;
+    for x in 0..blocks {
+        let base = x * block;
+        scratch.copy_from_slice(&sv.amps()[base..base + m]);
+        for y in 0..m {
+            let ny = ((y as u64) * c % modulus) as usize;
+            sv.amps_mut()[base + ny] = scratch[y];
+        }
+        let _ = x;
+        c = c * a_mod % modulus;
+    }
+    Ok(())
+}
+
+/// The multiplicative order of `a` modulo `N` — the period the algorithm is
+/// looking for. Classical, and only for checking the quantum answer.
+pub fn multiplicative_order(a: u64, modulus: u64) -> Option<u64> {
+    if modulus < 2 || gcd(a % modulus, modulus) != 1 {
+        return None;
+    }
+    let mut c = a % modulus;
+    for r in 1..=modulus {
+        if c == 1 {
+            return Some(r);
+        }
+        c = c * (a % modulus) % modulus;
+    }
+    None
+}

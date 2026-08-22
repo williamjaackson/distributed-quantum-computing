@@ -157,3 +157,28 @@ pub fn sample_unnormalised(amps: &[C], shots: u32, seed: u64) -> Vec<(u64, u32)>
     }
     out
 }
+
+/// Marginal probability over the high qubits, summing out the low `low_qubits`.
+///
+/// Shor's algorithm only ever reads the counting register, and the work register
+/// is entangled with it, so the quantity of interest is this marginal rather than
+/// the full distribution. Computing it here is one streaming pass and returns
+/// `2^(n - low_qubits)` values, which stays small even when the full state does
+/// not — a 16-qubit counting register is 512 KiB whatever the work register costs.
+pub fn register_marginal(sv: &StateVector, low_qubits: u32) -> Result<Vec<f64>, QsimError> {
+    if low_qubits > sv.n_qubits() {
+        return Err(QsimError::InvalidQubit { qubit: low_qubits, n_qubits: sv.n_qubits() });
+    }
+    let high = sv.n_qubits() - low_qubits;
+    if high > FULL_ARRAY_QUBIT_LIMIT {
+        return Err(QsimError::TooLargeForOperation { n_qubits: high, limit: FULL_ARRAY_QUBIT_LIMIT });
+    }
+    let block = 1usize << low_qubits;
+    let mut out: Vec<f64> = Vec::new();
+    out.try_reserve_exact(1usize << high)
+        .map_err(|_| QsimError::OutOfMemory { requested: high, bytes: (1u64 << high) * 8 })?;
+    for chunk in sv.amps().chunks(block) {
+        out.push(chunk.iter().map(|a| a.norm_sqr()).sum());
+    }
+    Ok(out)
+}
