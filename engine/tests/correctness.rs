@@ -635,3 +635,241 @@ fn benchmark_workload_is_unitary_and_reports_its_gate_count() {
         assert_close(sim.norm(), 1.0, &format!("norm after benchmark n={n}"));
     }
 }
+
+// ---------------------------------------------------------------------------
+// Streaming summaries
+//
+// These are what makes a large register visualisable: they answer "what is this
+// qubit doing" and "which states carry the probability" in one pass, with no
+// buffer proportional to the state. Both are checked against the full
+// amplitude array, which is the thing they exist to avoid needing.
+// ---------------------------------------------------------------------------
+
+/// Bloch vector computed the obvious way, from the whole amplitude array.
+fn naive_bloch(amps: &[C], qubit: u32) -> [f64; 3] {
+    let bit = 1usize << qubit;
+    let (mut r00, mut r11, mut re01, mut im01) = (0.0, 0.0, 0.0, 0.0);
+    for (i, a) in amps.iter().enumerate() {
+        if i & bit == 0 {
+            let b = amps[i | bit];
+            r00 += a.norm_sqr();
+            re01 += a.re * b.re + a.im * b.im;
+            im01 += a.im * b.re - a.re * b.im;
+        } else {
+            r11 += a.norm_sqr();
+        }
+    }
+    [2.0 * re01, -2.0 * im01, r00 - r11]
+}
+
+#[test]
+fn bloch_vector_matches_naive_reference() {
+    for n in 1..=5u32 {
+        let amps = random_state(n, 0xB10C + n as u64);
+        let sv = state_from(n, &amps);
+        for q in 0..n {
+            let got = qsim::measure::bloch_vector(&sv, q).unwrap();
+            let want = naive_bloch(&amps, q);
+            for (axis, (g, w)) in got.iter().zip(want.iter()).enumerate() {
+                assert_close(*g, *w, &format!("bloch axis {axis} of qubit {q}, n={n}"));
+            }
+        }
+    }
+}
+
+#[test]
+fn bloch_vector_is_a_unit_arrow_for_an_unentangled_qubit() {
+    // |+> on qubit 0, |0> elsewhere: qubit 0 points along +X at full length, and
+    // every other qubit points at the north pole.
+    let mut sim = Simulator::new(3).unwrap();
+    sim.apply_named("h", &[0], &[]).unwrap();
+    let [x, y, z] = sim.bloch_vector(0).unwrap();
+    assert_close(x, 1.0, "<X> of |+>");
+    assert_close(y, 0.0, "<Y> of |+>");
+    assert_close(z, 0.0, "<Z> of |+>");
+    for q in 1..3 {
+        let [_, _, z] = sim.bloch_vector(q).unwrap();
+        assert_close(z, 1.0, &format!("<Z> of untouched qubit {q}"));
+    }
+}
+
+#[test]
+fn bloch_vector_collapses_to_the_origin_under_entanglement() {
+    // Both halves of a Bell pair have no state of their own: the arrow has zero
+    // length even though the register as a whole is perfectly pure.
+    let mut sim = Simulator::new(2).unwrap();
+    sim.prepare_bell().unwrap();
+    assert_close(sim.norm(), 1.0, "norm of a Bell pair");
+    for q in 0..2 {
+        let [x, y, z] = sim.bloch_vector(q).unwrap();
+        let r = (x * x + y * y + z * z).sqrt();
+        assert_close(r, 0.0, &format!("bloch radius of Bell qubit {q}"));
+    }
+}
+
+#[test]
+fn bloch_vector_tracks_a_rotation_about_y() {
+    // RY(theta)|0> sits at angle theta from the north pole in the XZ plane.
+    for k in 0..8 {
+        let theta = std::f64::consts::PI * k as f64 / 4.0;
+        let mut sim = Simulator::new(1).unwrap();
+        sim.apply_named("ry", &[0], &[theta]).unwrap();
+        let [x, y, z] = sim.bloch_vector(0).unwrap();
+        assert_close(x, theta.sin(), &format!("<X> at theta={theta}"));
+        assert_close(y, 0.0, &format!("<Y> at theta={theta}"));
+        assert_close(z, theta.cos(), &format!("<Z> at theta={theta}"));
+    }
+}
+
+#[test]
+fn bloch_vector_rejects_a_qubit_out_of_range() {
+    let sim = Simulator::new(2).unwrap();
+    assert!(sim.bloch_vector(2).is_err(), "qubit 2 of a 2-qubit register");
+}
+
+#[test]
+fn top_amplitudes_matches_a_full_sort() {
+    for n in 1..=6u32 {
+        let amps = random_state(n, 0x7013 + n as u64);
+        let sv = state_from(n, &amps);
+        // The reference: sort everything, which is exactly what the streaming
+        // version must never do.
+        let mut all: Vec<(usize, f64)> =
+            amps.iter().enumerate().map(|(i, a)| (i, a.norm_sqr())).collect();
+        all.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap().then(a.0.cmp(&b.0)));
+
+        for k in [1usize, 3, 8, 1 << n, (1 << n) + 5] {
+            let got = qsim::measure::top_amplitudes(&sv, k);
+            let want = k.min(1 << n);
+            assert_eq!(got.len(), want, "top_amplitudes({k}) length for n={n}");
+            // Compare probabilities rather than indices: equal probabilities may
+            // legitimately come back in either order.
+            for (rank, (_, a)) in got.iter().enumerate() {
+                assert_close(
+                    a.norm_sqr(),
+                    all[rank].1,
+                    &format!("probability at rank {rank} of top {k}, n={n}"),
+                );
+            }
+            // Every returned index must carry the amplitude it claims.
+            for (i, a) in &got {
+                assert_states_close(
+                    &[*a],
+                    &[amps[*i as usize]],
+                    &format!("amplitude reported for index {i}, n={n}"),
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn top_amplitudes_skips_states_with_no_amplitude() {
+    // A GHZ state occupies exactly two of its 2^n basis states, so asking for
+    // more than two must not pad the list with zeros.
+    let mut sim = Simulator::new(5).unwrap();
+    sim.prepare_ghz().unwrap();
+    let top = sim.top_amplitudes(8);
+    assert_eq!(top.len(), 2, "occupied states in a 5-qubit GHZ state");
+    let mut indices: Vec<u64> = top.iter().map(|(i, _)| *i).collect();
+    indices.sort_unstable();
+    assert_eq!(indices, vec![0, 31], "GHZ occupies |00000> and |11111>");
+    assert!(qsim::measure::top_amplitudes(&StateVector::try_new(3).unwrap(), 0).is_empty());
+}
+
+#[test]
+fn top_amplitudes_finds_the_marked_state_after_grover() {
+    let mut sim = Simulator::new(6).unwrap();
+    let marked = 41usize;
+    sim.run_grover(marked, -1).unwrap();
+    let top = sim.top_amplitudes(1);
+    assert_eq!(top[0].0, marked as u64, "peak after Grover");
+}
+
+/// Two-qubit reduced density matrix, built the obvious way.
+fn naive_reduced_two(amps: &[C], a: u32, b: u32) -> [f64; 32] {
+    let ba = 1usize << a;
+    let bb = 1usize << b;
+    let mut rho = [0.0f64; 32];
+    for (i, x) in amps.iter().enumerate() {
+        let k = usize::from(i & ba != 0) | (usize::from(i & bb != 0) << 1);
+        for (j, y) in amps.iter().enumerate() {
+            // Only pairs that agree on every *other* qubit contribute.
+            if (i & !ba & !bb) != (j & !ba & !bb) {
+                continue;
+            }
+            let l = usize::from(j & ba != 0) | (usize::from(j & bb != 0) << 1);
+            let at = 2 * (k * 4 + l);
+            rho[at] += x.re * y.re + x.im * y.im;
+            rho[at + 1] += x.im * y.re - x.re * y.im;
+        }
+    }
+    rho
+}
+
+#[test]
+fn reduced_two_matches_naive_reference() {
+    for n in 2..=5u32 {
+        let amps = random_state(n, 0x2D0 + n as u64);
+        let sv = state_from(n, &amps);
+        for a in 0..n {
+            for b in 0..n {
+                if a == b {
+                    assert!(qsim::measure::reduced_two(&sv, a, b).is_err(), "a == b");
+                    continue;
+                }
+                let got = qsim::measure::reduced_two(&sv, a, b).unwrap();
+                let want = naive_reduced_two(&amps, a, b);
+                for (idx, (g, w)) in got.iter().zip(want.iter()).enumerate() {
+                    assert_close(*g, *w, &format!("rho[{idx}] for ({a},{b}), n={n}"));
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn reduced_two_has_the_marginals_on_its_diagonal() {
+    // Tracing out either qubit of the pair must give back the one-qubit matrix,
+    // which ties reduced_two to reduced_one rather than only to its own naive twin.
+    let amps = random_state(4, 0x11FE);
+    let sv = state_from(4, &amps);
+    for a in 0..4u32 {
+        for b in 0..4u32 {
+            if a == b {
+                continue;
+            }
+            let rho = qsim::measure::reduced_two(&sv, a, b).unwrap();
+            let diag = |k: usize| rho[2 * (k * 4 + k)];
+            // Summing over qubit b's value leaves qubit a's marginal.
+            let a1 = diag(1) + diag(3);
+            let [_, _, _, want_a] = qsim::measure::reduced_one(&sv, a).unwrap();
+            assert_close(a1, want_a, &format!("P({a}=1) from the pair ({a},{b})"));
+            let b1 = diag(2) + diag(3);
+            let [_, _, _, want_b] = qsim::measure::reduced_one(&sv, b).unwrap();
+            assert_close(b1, want_b, &format!("P({b}=1) from the pair ({a},{b})"));
+            assert_close(
+                diag(0) + diag(1) + diag(2) + diag(3),
+                1.0,
+                &format!("trace of the pair ({a},{b})"),
+            );
+        }
+    }
+}
+
+#[test]
+fn reduced_two_of_a_bell_pair_is_the_bell_projector() {
+    // (|00> + |11>)/sqrt(2): the only non-zero entries are the four corners of
+    // the 00/11 block, each exactly 1/2 with no imaginary part.
+    let mut sim = Simulator::new(2).unwrap();
+    sim.prepare_bell().unwrap();
+    let rho = sim.reduced_two(0, 1).unwrap();
+    for k in 0..4usize {
+        for l in 0..4usize {
+            let at = 2 * (k * 4 + l);
+            let want = if (k == 0 || k == 3) && (l == 0 || l == 3) { 0.5 } else { 0.0 };
+            assert_close(rho[at], want, &format!("Re rho[{k}][{l}]"));
+            assert_close(rho[at + 1], 0.0, &format!("Im rho[{k}][{l}]"));
+        }
+    }
+}

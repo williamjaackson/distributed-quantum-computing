@@ -101,6 +101,21 @@ impl Simulator {
         measure::expectation_z(&self.sv, qubit)
     }
 
+    /// Bloch vector of one qubit: `[<X>, <Y>, <Z>]`. Streams, so any register size.
+    pub fn bloch_vector(&self, qubit: u32) -> Result<[f64; 3], QsimError> {
+        measure::bloch_vector(&self.sv, qubit)
+    }
+
+    /// The `k` most probable basis states, largest first.
+    pub fn top_amplitudes(&self, k: usize) -> Vec<(u64, C)> {
+        measure::top_amplitudes(&self.sv, k)
+    }
+
+    /// Two-qubit reduced density matrix; see [`measure::reduced_two`].
+    pub fn reduced_two(&self, a: u32, b: u32) -> Result<[f64; 32], QsimError> {
+        measure::reduced_two(&self.sv, a, b)
+    }
+
     /// Measure one qubit, collapsing the state onto the observed outcome.
     pub fn measure(&mut self, qubit: u32) -> Result<u8, QsimError> {
         measure::measure(&mut self.sv, qubit, &mut self.rng)
@@ -264,6 +279,41 @@ impl JsSimulator {
         self.inner.expectation_z(qubit).map_err(js_err)
     }
 
+    /// Bloch vector of one qubit as `[x, y, z]`.
+    ///
+    /// The whole-register summary the views actually need, without ever pulling
+    /// a full array across the boundary — so it stays available at register
+    /// sizes where `amplitudes()` is refused outright.
+    #[wasm_bindgen(js_name = blochVector)]
+    pub fn bloch_vector(&self, qubit: u32) -> Result<Vec<f64>, JsValue> {
+        self.inner
+            .bloch_vector(qubit)
+            .map(|v| v.to_vec())
+            .map_err(js_err)
+    }
+
+    /// Two-qubit reduced density matrix as 16 interleaved `(re, im)` entries,
+    /// row-major, with the subsystem index `bit_a + 2 * bit_b`.
+    #[wasm_bindgen(js_name = reducedTwoFlat)]
+    pub fn reduced_two_flat(&self, a: u32, b: u32) -> Result<Vec<f64>, JsValue> {
+        self.inner.reduced_two(a, b).map(|m| m.to_vec()).map_err(js_err)
+    }
+
+    /// The `k` most probable basis states, flattened to
+    /// `[index, re, im, index, re, im, ...]`, largest first.
+    ///
+    /// Indices are `f64` — exact to 2^53, so well past any addressable register.
+    #[wasm_bindgen(js_name = topAmplitudesFlat)]
+    pub fn top_amplitudes_flat(&self, k: u32) -> Vec<f64> {
+        let mut out = Vec::with_capacity(k as usize * 3);
+        for (i, a) in self.inner.top_amplitudes(k as usize) {
+            out.push(i as f64);
+            out.push(a.re);
+            out.push(a.im);
+        }
+        out
+    }
+
     pub fn measure(&mut self, qubit: u32) -> Result<u32, JsValue> {
         self.inner.measure(qubit).map(|b| b as u32).map_err(js_err)
     }
@@ -316,6 +366,38 @@ impl JsSimulator {
     #[wasm_bindgen(js_name = setBasisState)]
     pub fn set_basis_state(&mut self, index: f64) -> Result<(), JsValue> {
         self.inner.set_basis_state(index as usize).map_err(js_err)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Randomness, shared with the sharded orchestrator
+// ---------------------------------------------------------------------------
+
+/// The engine's own generator, exposed so a caller can draw from the *same*
+/// stream the whole-state path uses.
+///
+/// A sharded measurement cannot be drawn inside a shard — the outcome has to be
+/// decided once against the global marginal, which only the orchestrator can
+/// see. If the orchestrator brings its own generator, the same circuit under the
+/// same seed observes different outcomes depending on how the register happened
+/// to be held, which makes the two execution paths impossible to compare. Using
+/// this instead makes them bit-identical.
+#[wasm_bindgen(js_name = Prng)]
+pub struct JsRng {
+    inner: Rng,
+}
+
+#[wasm_bindgen(js_class = Prng)]
+impl JsRng {
+    #[wasm_bindgen(constructor)]
+    pub fn new(seed: f64) -> JsRng {
+        JsRng { inner: Rng::new(seed as u64) }
+    }
+
+    /// Next uniform in `[0, 1)`, advancing the stream.
+    #[wasm_bindgen(js_name = nextF64)]
+    pub fn next_f64(&mut self) -> f64 {
+        self.inner.next_f64()
     }
 }
 
@@ -511,6 +593,51 @@ impl JsShard {
             out.push(count as f64);
         }
         out
+    }
+
+    /// One-qubit reduced density matrix over this slice as `[r00, re01, im01, r11]`,
+    /// for a *local* qubit. Sum the four across shards to get the global matrix.
+    #[wasm_bindgen(js_name = localReducedOne)]
+    pub fn local_reduced_one(&self, qubit: u32) -> Result<Vec<f64>, JsValue> {
+        self.inner
+            .local_reduced_one(qubit)
+            .map(|v| v.to_vec())
+            .map_err(js_err)
+    }
+
+    /// This slice's `k` largest amplitudes as `[local_index, re, im, ...]`.
+    #[wasm_bindgen(js_name = localTopAmplitudesFlat)]
+    pub fn local_top_amplitudes_flat(&self, k: u32) -> Vec<f64> {
+        let mut out = Vec::with_capacity(k as usize * 3);
+        for (i, a) in self.inner.local_top_amplitudes(k as usize) {
+            out.push(i as f64);
+            out.push(a.re);
+            out.push(a.im);
+        }
+        out
+    }
+
+    /// Collapse a *local* qubit onto an outcome the orchestrator drew.
+    #[wasm_bindgen(js_name = collapseLocal)]
+    pub fn collapse_local(&mut self, qubit: u32, outcome: u32, scale: f64) -> Result<(), JsValue> {
+        self.inner
+            .collapse_local(qubit, outcome as u8, scale)
+            .map_err(js_err)
+    }
+
+    /// Empty the slice — used for the shards a global measurement rules out.
+    pub fn clear(&mut self) {
+        self.inner.clear();
+    }
+
+    /// `sum(own * conj(partner))` over one block as `[re, im]`, with the partner's
+    /// block already staged in the scratch buffer.
+    #[wasm_bindgen(js_name = dotScratch)]
+    pub fn dot_scratch(&self, block: u32) -> Result<Vec<f64>, JsValue> {
+        self.inner
+            .dot_scratch(block as usize)
+            .map(|v| v.to_vec())
+            .map_err(js_err)
     }
 
     /// Probabilities across this slice. Guarded like the whole-state version.
