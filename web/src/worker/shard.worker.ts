@@ -118,6 +118,15 @@ function handle(req: ShardReq): { data: unknown; transfer?: Transferable[] } {
       shard.scale(req.factor);
       return { data: null };
 
+    case 'modexpLocal':
+      shard.modexpLocal(req.a, req.modulus, req.workQubits);
+      return { data: null };
+
+    case 'registerMarginal': {
+      const m = shard.registerMarginal(req.lowQubits);
+      return { data: m, transfer: [m.buffer] };
+    }
+
     case 'mass':
       return { data: shard.probabilityMass() };
 

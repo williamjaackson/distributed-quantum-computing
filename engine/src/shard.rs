@@ -244,6 +244,44 @@ impl Shard {
         }
     }
 
+    /// Modular-exponentiation oracle over this slice alone.
+    ///
+    /// Free of communication, and not by accident: the counting register lives in
+    /// the high index bits, so this shard's id is the top of `x`, and the work
+    /// register — the only thing the oracle permutes — is entirely local. The
+    /// shard derives its own starting power from its index, so nothing has to be
+    /// coordinated.
+    ///
+    /// Requires the work register to fit inside the slice, which holds whenever
+    /// the shard boundary falls within the counting register.
+    pub fn modexp_oracle_local(
+        &mut self,
+        a: u64,
+        modulus: u64,
+        work_qubits: u32,
+    ) -> Result<(), QsimError> {
+        if work_qubits > self.local_qubits() {
+            return Err(QsimError::InvalidOracle(format!(
+                "work register of {work_qubits} qubits does not fit in a {}-qubit slice; \
+                 the shard boundary must fall inside the counting register",
+                self.local_qubits()
+            )));
+        }
+        let x_low_bits = self.local_qubits() - work_qubits;
+        let x_offset = (self.index as u64) << x_low_bits;
+        let start = crate::circuits::mod_pow(a, x_offset, modulus);
+        crate::circuits::modexp_oracle_from(&mut self.state, a, modulus, work_qubits, start)
+    }
+
+    /// This slice's share of the counting register's distribution.
+    ///
+    /// Also local: the work register being traced out is the low bits. Shard
+    /// order matches ascending `x`, so concatenating the slices in index order
+    /// gives the global marginal directly.
+    pub fn register_marginal(&self, low_qubits: u32) -> Result<Vec<f64>, QsimError> {
+        crate::measure::register_marginal(&self.state, low_qubits)
+    }
+
     /// Apply one block of a global-target gate. `partner_block` holds the same
     /// local index range from the partner shard.
     pub fn apply_pair(

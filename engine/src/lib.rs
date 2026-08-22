@@ -312,6 +312,28 @@ impl JsSimulator {
         Ok(m0 as u32 | ((m1 as u32) << 1))
     }
 
+    /// Modular exponentiation oracle: |x>|y> -> |x>|y * a^x mod N>, with the work
+    /// register in the low `work_qubits` bits and the counting register above.
+    ///
+    /// Applied directly to amplitudes rather than decomposed into gates: a
+    /// gate-level modular multiplier costs thousands of Toffolis and its own
+    /// ancillas, which would dominate the qubit budget and runtime while teaching
+    /// nothing about period finding.
+    #[wasm_bindgen(js_name = applyModexp)]
+    pub fn apply_modexp(&mut self, a: f64, modulus: f64, work_qubits: u32) -> Result<(), JsValue> {
+        circuits::modexp_oracle(&mut self.inner.sv, a as u64, modulus as u64, work_qubits)
+            .map_err(js_err)
+    }
+
+    /// Probability of each value of the high qubits, summing out the low ones.
+    ///
+    /// This is what Shor's algorithm reads: the counting register's distribution,
+    /// with the entangled work register traced out.
+    #[wasm_bindgen(js_name = registerMarginal)]
+    pub fn register_marginal(&self, low_qubits: u32) -> Result<Vec<f64>, JsValue> {
+        measure::register_marginal(&self.inner.sv, low_qubits).map_err(js_err)
+    }
+
     #[wasm_bindgen(js_name = setBasisState)]
     pub fn set_basis_state(&mut self, index: f64) -> Result<(), JsValue> {
         self.inner.set_basis_state(index as usize).map_err(js_err)
@@ -357,6 +379,35 @@ pub fn full_array_qubit_limit() -> u32 {
 #[wasm_bindgen(js_name = gateNames)]
 pub fn gate_names() -> Vec<String> {
     GATE_NAMES.iter().map(|s| s.to_string()).collect()
+}
+
+/// Multiplicative order of `a` mod `N`, computed classically.
+///
+/// Only for checking the quantum answer — the algorithm itself must not use it.
+#[wasm_bindgen(js_name = multiplicativeOrder)]
+pub fn multiplicative_order(a: f64, modulus: f64) -> i32 {
+    circuits::multiplicative_order(a as u64, modulus as u64).map_or(-1, |r| r as i32)
+}
+
+/// Recover a period from a measured phase. See [`circuits::period_from_phase`].
+///
+/// Returns -1 when no period explains the measurement, which is a normal outcome
+/// and not an error.
+#[wasm_bindgen(js_name = periodFromPhase)]
+pub fn period_from_phase(measured: f64, precision: f64, a: f64, modulus: f64) -> f64 {
+    circuits::period_from_phase(measured as u64, precision as u64, a as u64, modulus as u64, 8)
+        .map_or(-1.0, |r| r as f64)
+}
+
+/// Largest period a counting register of this size can resolve.
+#[wasm_bindgen(js_name = resolvablePeriod)]
+pub fn resolvable_period(count_qubits: u32) -> f64 {
+    circuits::resolvable_period(count_qubits) as f64
+}
+
+#[wasm_bindgen(js_name = greatestCommonDivisor)]
+pub fn greatest_common_divisor(a: f64, b: f64) -> f64 {
+    circuits::gcd(a as u64, b as u64) as f64
 }
 
 #[wasm_bindgen(js_name = engineVersion)]
@@ -483,6 +534,23 @@ impl JsShard {
     /// Multiply every amplitude by `factor`, to normalise after a filled slice.
     pub fn scale(&mut self, factor: f64) {
         self.inner.scale(factor);
+    }
+
+    /// Modular-exponentiation oracle over this slice alone — no communication.
+    #[wasm_bindgen(js_name = modexpLocal)]
+    pub fn modexp_local(&mut self, a: f64, modulus: f64, work_qubits: u32) -> Result<(), JsValue> {
+        self.inner
+            .modexp_oracle_local(a as u64, modulus as u64, work_qubits)
+            .map_err(js_err)
+    }
+
+    /// This slice's share of the counting register's distribution.
+    ///
+    /// Concatenating these in shard order gives the global marginal, because a
+    /// shard id is the top of the counting register.
+    #[wasm_bindgen(js_name = registerMarginal)]
+    pub fn shard_register_marginal(&self, low_qubits: u32) -> Result<Vec<f64>, JsValue> {
+        self.inner.register_marginal(low_qubits).map_err(js_err)
     }
 
     /// This slice's share of the total probability; sum across shards for the norm.
