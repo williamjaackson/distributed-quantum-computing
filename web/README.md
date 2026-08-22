@@ -8,6 +8,13 @@ npm run dev        # from the repo root: builds the WASM package, then serves
 npm test           # engine tests, smoke tests, typecheck, program verification
 ```
 
+## Layout
+
+Three columns: what to run on the left, what it looks like in the middle, what
+came out on the right. The answer has a column of its own because it was ending
+up below the fold of a scrolling sidebar, which is the one place an answer must
+never be.
+
 ## The shape of it
 
 One source of truth: `runProgram` executes a program one step at a time and

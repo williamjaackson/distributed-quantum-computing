@@ -283,29 +283,6 @@ export function App() {
             )}
           </section>
 
-          <section className="card" id="outputs">
-            <h2 className="card-title">Outputs</h2>
-            {timeline && frame ? (
-              <OutputsPanel readouts={readouts} bits={finalFrame?.bits ?? {}} norm={frame.norm} />
-            ) : (
-              <p className="field-hint">starting the engine…</p>
-            )}
-            {timeline?.error && (
-              <p className="error" style={{ marginTop: 8 }}>
-                {timeline.error}
-              </p>
-            )}
-          </section>
-
-          {timeline && finalAnalysis && (
-            <MeasurementPanel
-              timeline={timeline}
-              analysis={finalAnalysis}
-              shots={shots}
-              onShots={setShots}
-            />
-          )}
-
           <ExecutionPanel
             execution={execution}
             onExecution={setExecution}
@@ -375,6 +352,32 @@ export function App() {
             onSpeed={player.setSpeed}
           />
         </main>
+
+        <aside className="results">
+          <section className="card" id="outputs">
+            <h2 className="card-title">Outputs</h2>
+            {timeline && frame ? (
+              <OutputsPanel readouts={readouts} bits={finalFrame?.bits ?? {}} norm={frame.norm} />
+            ) : (
+              <p className="field-hint">starting the engine…</p>
+            )}
+            {timeline?.error && (
+              <p className="error" style={{ marginTop: 8 }}>
+                {timeline.error}
+              </p>
+            )}
+          </section>
+
+          {timeline && finalAnalysis && (
+            <MeasurementPanel
+              timeline={timeline}
+              analysis={finalAnalysis}
+              shots={shots}
+              onShots={setShots}
+            />
+          )}
+
+        </aside>
       </div>
     </div>
   );

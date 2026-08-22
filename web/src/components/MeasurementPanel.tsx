@@ -10,6 +10,10 @@
  * Sampled counts are shown against the exact probability, because the gap
  * between them *is* the shot noise, and watching it close as the shot count goes
  * up is the clearest way to see why anyone takes more than one.
+ *
+ * A table rather than a chart, deliberately. One outcome at 96% beside a dozen
+ * at 0.3% makes bars useless — the long one is full, the rest are invisible —
+ * and the numbers are the thing being compared anyway.
  */
 import type { Analysis } from '../lib/analysis';
 import { SHOT_OPTIONS } from '../lib/runner';
@@ -33,7 +37,6 @@ export function MeasurementPanel({ timeline, analysis, shots, onShots }: Props) 
   const rest = timeline.shots.slice(ROWS);
   const restCount = rest.reduce((a, o) => a + o.count, 0);
   const exact = new Map(analysis.support.map((e) => [e.index, e.prob]));
-  const widest = shown.length > 0 ? shown[0].count : 1;
   // A circuit that measures ends in a different state every shot, so there is no
   // single exact distribution to compare against and the column would be a lie.
   const comparable = measurement.method === 'sampled';
@@ -68,10 +71,7 @@ export function MeasurementPanel({ timeline, analysis, shots, onShots }: Props) 
             <tbody>
               {shown.map((o) => (
                 <tr key={o.index}>
-                  <td>
-                    <span className="shot-bar" style={{ width: `${(o.count / widest) * 100}%` }} />
-                    {ket(o.index, timeline.nQubits)}
-                  </td>
+                  <td>{ket(o.index, timeline.nQubits)}</td>
                   <td>{pct(o.count / total, 1)}</td>
                   {comparable && <td>{pct(exact.get(o.index) ?? 0, 1)}</td>}
                 </tr>

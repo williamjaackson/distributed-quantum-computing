@@ -115,21 +115,33 @@ button {
   white-space: nowrap;
 }
 
+/* Three columns: what to run, what it looks like, what came out. The answer
+   gets a column of its own because it was ending up below the fold of a
+   scrolling sidebar, which is the one place it must never be. */
 .body {
   display: grid;
-  grid-template-columns: 320px minmax(0, 1fr);
+  grid-template-columns: 310px minmax(0, 1fr) 300px;
   gap: 16px;
   padding: 16px 20px 20px;
   min-height: 0;
 }
 
-@media (max-width: 900px) {
+@media (max-width: 1200px) {
   .app {
     height: auto;
   }
   .body {
     grid-template-columns: minmax(0, 1fr);
   }
+}
+
+.results {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
 }
 
 .sidebar {
@@ -698,26 +710,6 @@ table.data tr.is-peak td {
   background: var(--blue-100);
 }
 
-/* A bar behind the outcome label rather than beside it: the sidebar has no room
-   for a column of its own, and the label is the thing being measured. */
-.shot-bar {
-  position: absolute;
-  left: 0;
-  top: 2px;
-  bottom: 2px;
-  background: var(--blue-100);
-  border-radius: 2px;
-  z-index: 0;
-}
-
-table.data td:first-child {
-  position: relative;
-  isolation: isolate;
-}
-
-table.data td:first-child > span:not(.shot-bar) {
-  position: relative;
-}
 
 /* ---------- legends, notes ---------- */
 
