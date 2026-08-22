@@ -53,13 +53,49 @@ amplitudes, and side by side they compete rather than combine.
 | Qubit map | a dial per qubit, chorded by correlation | entanglement, collapse |
 | Polarisation | a Bloch sphere per qubit | phase on a single qubit; entanglement as a *short* arrow |
 | Complex plane | amplitudes as points | phase, exactly — the QFT's winding |
-| Shots | the engine's sampler against the exact probabilities | what an experiment would return |
+
+There is deliberately no shots view — see below.
 
 Probability and phase get two different encodings — height and angle — rather
 than one colour-coded bar. A phase is a direction, so a dial reads at a glance
 and survives greyscale. Colour is left to carry one thing: blue is |1⟩ and
 amplitude, grey is |0⟩ and chrome, orange is measurement. The palette is the
 data-viz reference set, validated all-pairs on the light surface.
+
+## Measurement
+
+A state vector is not a result. The amplitudes are not something any experiment
+can read, and the answer to "what does this program compute" is what comes back
+when you measure it, repeatedly. So measurement is not one of the views: it is
+part of every run, and it lives beside the outputs because that is where an
+answer belongs.
+
+How the shots are taken depends on the circuit, and the difference is not
+cosmetic:
+
+| | when | cost |
+| --- | --- | --- |
+| **sampled** | no mid-circuit measurement | one pass — every shot is drawn from the same final state, exactly |
+| **repeated** | the circuit measures | the whole circuit re-run per shot; there is no shortcut, so it is budgeted |
+
+For a sampled run the exact probability sits beside the sampled share, because
+that gap *is* the shot noise and watching it close as the count rises is the
+reason anyone takes more than one shot. For a repeated run there is no single
+final state to compare against, so the column is absent rather than invented.
+
+There is no seed control. A seed asks the reader to manage the one thing shots
+exist to average away; per-shot seeds are derived from the shot index, so the
+same inputs always give the same answer. What replaced it is more useful: for a
+circuit that measures, **"watching shot k of N"** — the frames are one
+trajectory out of N, and which one is now something you can say.
+
+Readouts describe the *end* of the run, not the playhead. An answer that changes
+as you scrub is not an answer; the views are what show the state mid-circuit.
+And a program's answer is what it measured, not what was most probable — Grover
+reports how many shots found the marked state, the adder whether all of them
+read the same sum, Deutsch–Jozsa's verdict is what the shots said. The
+difference is not pedantic: for QAOA the likeliest outcome is a *bad*
+allocation, and reporting it was a wrong answer stated confidently.
 
 ## Register size
 
