@@ -177,7 +177,9 @@ export function StateVectorView({ analysis }: ViewProps) {
         {!showDials && support.length > 0 && ' Phases are too dense to dial here — see the table.'}
         {significant.length < support.length &&
           showDials &&
-          ` Dials shown for the ${significant.length} states above 0.2%.`}
+          ` Dials shown for the ${
+            significant.length === 1 ? 'one state' : `${significant.length} states`
+          } above 0.2%.`}
       </p>
 
       <table className="data">

@@ -165,9 +165,14 @@ export const adder: Program = {
     }
     rows.push({
       label: 'A afterwards',
-      value: `${restored.value}`,
+      // In superposition every value of A is equally likely, so the likeliest
+      // one is a coin toss between ties and reporting it would say nothing.
+      // What matters is that the spread came back intact.
+      value: superpose ? `all ${mask + 1} values` : `${restored.value}`,
       hint: superpose
-        ? 'still every value — the circuit never consumed it'
+        ? restored.confidence <= 1.5 / (mask + 1)
+          ? 'still spread evenly — the circuit never consumed it'
+          : 'the spread came back uneven, which it should not have'
         : restored.value === av
           ? 'returned unchanged, as a reversible circuit must'
           : `expected ${av} — A should come back untouched`,
