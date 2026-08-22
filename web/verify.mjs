@@ -346,21 +346,60 @@ const byId = (id) => PROGRAMS.find((p) => p.id === id);
   // What the circuit does with it, at the angles qaoa.rs ships and at better
   // ones. Both are claims the program makes in its own panel.
   const before = optimal.length / 4096;
-  const amplification = (over) => {
+  const measure = (over) => {
     const { probs } = run(program, { ...values, ...over });
-    return optimal.reduce((t, x) => t + probs[x], 0) / before;
+    return {
+      amplification: optimal.reduce((t, x) => t + probs[x], 0) / before,
+      probs,
+    };
   };
-  const shipped = amplification({});
+  const shipped = measure({});
   check(
     'qaoa: the shipped angles amplify the optimum at all',
-    shipped > 2,
-    `${shipped.toFixed(2)}x at the default γ=${values.gamma}, β=${values.beta}`,
+    shipped.amplification > 2,
+    `${shipped.amplification.toFixed(2)}x at the default γ=${values.gamma}, β=${values.beta}`,
   );
-  const tuned = amplification({ gamma: 0.04, beta: 0.68 });
+  const tuned = measure({ gamma: 0.04, beta: 0.68 });
   check(
     'qaoa: a better setting is reachable on the sliders',
-    tuned > 20 && tuned > shipped * 5,
-    `${tuned.toFixed(1)}x at γ=0.04, β=0.68 against ${shipped.toFixed(2)}x shipped`,
+    tuned.amplification > 20 && tuned.amplification > shipped.amplification * 5,
+    `${tuned.amplification.toFixed(1)}x at γ=0.04, β=0.68 against ${shipped.amplification.toFixed(2)}x shipped`,
+  );
+
+  // The answer is the cheapest allocation among the shots, which is a different
+  // and better thing than the likeliest outcome. At the shipped angles the
+  // likeliest outcome is a poor allocation, so a readout that reported it would
+  // be confidently wrong — this is the check that would have caught that.
+  const bestSampled = (probs, shots) => {
+    // Draw deterministically from the distribution, the way the sampler does:
+    // take the states in order of probability until the shots run out.
+    const ranked = [...probs.keys()].sort((a, b) => probs[b] - probs[a]);
+    let left = shots;
+    let best = Infinity;
+    for (const x of ranked) {
+      if (left <= 0) break;
+      const expected = probs[x] * shots;
+      if (expected < 0.5) break;
+      left -= expected;
+      best = Math.min(best, objective(x));
+    }
+    return best;
+  };
+  const likeliest = (probs) => {
+    let peak = 0;
+    probs.forEach((p, i) => { if (p > probs[peak]) peak = i; });
+    return objective(peak);
+  };
+  check(
+    'qaoa: the likeliest outcome is a much worse answer than the shots give',
+    likeliest(shipped.probs) > bestSampled(shipped.probs, 1024) + 1,
+    `likeliest leaves ${likeliest(shipped.probs).toFixed(4)} unmet, best of ~1024 shots leaves ` +
+      `${bestSampled(shipped.probs, 1024).toFixed(4)}, optimum is ${bestCost.toFixed(4)}`,
+  );
+  check(
+    'qaoa: enough shots reach the optimum at the shipped angles',
+    bestSampled(shipped.probs, 65536) <= bestCost + 1e-9,
+    `best of ~65536 shots leaves ${bestSampled(shipped.probs, 65536).toFixed(4)}`,
   );
 }
 

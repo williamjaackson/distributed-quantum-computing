@@ -192,7 +192,7 @@ export const qaoa: Program = {
   name: 'QAOA power grid',
   blurb: 'Share 20 W between four consumers that want 27 — on 12 qubits.',
   detail:
-    'The circuit is the engine’s own: qaoa.rs builds it from a QaoaConfig and this program only supplies the config. Watch it with the state-vector view open. The cost layer writes each allocation’s shortfall into its phase and the bars do not move at all — the step that makes people think nothing happened. The mixer then turns those phases into interference. At the angles qaoa.rs ships with, the optimum comes out about two and a half times more likely than an even draw; drag γ down toward 0.04 and that becomes forty. One round of QAOA is powerful and brittle at the same time, which is hard to convey without a slider.',
+    'The circuit is the engine’s own: qaoa.rs builds it from a QaoaConfig and this program only supplies the config. Watch it with the state-vector view open — the cost layer writes each allocation’s shortfall into its phase and the bars do not move at all, which is the step that makes people think nothing happened. The mixer then turns those phases into interference. QAOA is a sampler, so the answer is the cheapest allocation among the shots, not the likeliest outcome: the likeliest is usually mediocre. Raise the shot count and the answer improves; drag γ toward 0.04 and it improves far more, because the optimum goes from 2.5× to 33× as likely. One round is powerful and brittle at once.',
   suggestedView: 'state',
   inputs: [
     {
@@ -268,35 +268,64 @@ export const qaoa: Program = {
     );
     yield* decodePlan(flat, penalties);
   },
-  outputs: ({ likeliest, probabilityOf, finished }) => {
+  outputs: ({ probabilityOf, shots, measurement }) => {
     const best = classicalBest();
-    const chosen = allocations(likeliest);
-    const total = chosen.reduce((a, b) => a + b, 0);
-    const cost = objective(likeliest);
+    // The answer, the way `tests/qaoa_module.rs` defines it: the cheapest
+    // allocation among the states actually sampled. QAOA is a sampler, not an
+    // oracle — the likeliest outcome is usually mediocre, and reporting it as
+    // the result is how you end up presenting a wrong answer confidently.
+    let found: { state: number; cost: number } | null = null;
+    let feasibleShots = 0;
+    for (const o of shots) {
+      const cost = objective(o.index);
+      if (!Number.isFinite(cost)) continue;
+      feasibleShots += o.count;
+      if (!found || cost < found.cost) found = { state: o.index, cost };
+    }
+    const drawn = shots.reduce((a, o) => a + o.count, 0) || 1;
+    const optimumHits = shots
+      .filter((o) => best.states.includes(o.index))
+      .reduce((a, o) => a + o.count, 0);
+
     const before = best.states.length / STATES;
     const now = best.states.reduce((s, x) => s + probabilityOf(x), 0);
+    const allocated = found ? allocations(found.state) : null;
 
     const rows: Readout[] = [
       {
-        label: finished ? 'Likeliest allocation' : 'Likeliest so far',
-        value: CONSUMERS.map((c, i) => `${c.short} ${chosen[i]}`).join(' · '),
+        label: `Best of ${measurement.taken.toLocaleString()} shots`,
+        value: allocated
+          ? CONSUMERS.map((c, i) => `${c.short} ${allocated[i]}`).join(' · ')
+          : 'nothing within budget',
         hero: true,
-        hint: `${total} of ${BUDGET} W used${total > BUDGET ? ' — over budget' : ''}`,
-      },
-      {
-        label: 'Its unmet demand',
-        value: Number.isFinite(cost) ? cost.toFixed(4) : 'over budget',
-        hint: `the best possible is ${best.cost.toFixed(4)}`,
+        hint: allocated
+          ? `${allocated.reduce((a, b) => a + b, 0)} of ${BUDGET} W used, leaving ${found!.cost.toFixed(
+              4,
+            )} unmet`
+          : 'every shot broke the budget',
       },
       {
         label: 'Optimum',
         value: CONSUMERS.map((c, i) => `${c.short} ${best.allocated[i]}`).join(' · '),
-        hint: `by exhaustive search over the ${best.feasible.toLocaleString()} allocations within budget`,
+        hint: `${best.cost.toFixed(4)} unmet, by exhaustive search over the ${best.feasible.toLocaleString()} allocations within budget`,
+      },
+      {
+        label: 'Shots that found it',
+        value: `${optimumHits.toLocaleString()} of ${measurement.taken.toLocaleString()}`,
+        hint:
+          optimumHits === 0
+            ? 'none — take more shots, or move γ'
+            : `${((optimumHits / drawn) * 100).toFixed(2)}% of them`,
+      },
+      {
+        label: 'Shots within budget',
+        value: `${((feasibleShots / drawn) * 100).toFixed(1)}%`,
+        hint: 'the budget is a phase penalty, not a constraint — it can be broken',
       },
       {
         label: 'P(optimum)',
         value: `${(now * 100).toFixed(3)}%`,
-        hint: `${(now / before).toFixed(1)}× the ${(before * 100).toFixed(3)}% it started at`,
+        hint: `${(now / before).toFixed(1)}× the ${(before * 100).toFixed(3)}% an even draw would give`,
       },
     ];
     return rows;
