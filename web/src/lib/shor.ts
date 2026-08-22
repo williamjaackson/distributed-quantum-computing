@@ -100,20 +100,50 @@ export function planShor(availableQubits: number, countRatio = 2): ShorPlan | nu
 }
 
 /**
+ * Largest period a counting register of `countQubits` can resolve.
+ *
+ * Continued fractions pin down `s/r` uniquely when `2^t > 2r^2`, so the
+ * resolvable period grows only as the square root of the register size. This is
+ * the real constraint on Shor's algorithm, and it is why the counting register
+ * conventionally gets twice the work register rather than the same.
+ */
+export function resolvablePeriod(countQubits: number): number {
+  return Math.floor(Math.sqrt(2 ** countQubits / 2));
+}
+
+/**
  * Recover a period from a measured phase by continued fractions.
  *
- * The measurement gives `m` such that `m / 2^t ≈ s / r` for some unknown `s`.
- * Expanding that fraction and testing each convergent's denominator finds `r`:
- * the right one is the first denominator below `N` that actually satisfies
- * `a^r ≡ 1 mod N`, which is why this can verify its own answer classically.
+ * The measurement gives `m` with `m / 2^t ≈ s / r`. Expanding that fraction and
+ * testing convergent denominators finds `r`, and because `a^r ≡ 1 mod N` is
+ * checkable the answer verifies itself.
+ *
+ * Two constraints keep this honest, and both were learned the hard way:
+ *
+ * `maxMultiplier` is bounded. When `gcd(s, r) > 1` the convergent lands on
+ * `r / gcd(s, r)`, so trying a few multiples recovers the real period — but the
+ * *first* convergent of any `m < 2^t` has denominator 1, so an unbounded multiple
+ * search degenerates into testing `r = 1, 2, 3, …` until `a^r ≡ 1`. That is a
+ * classical brute-force order search, it ignores the measurement completely, and
+ * it will happily "factor" numbers the register could never resolve.
+ *
+ * The recovered period must also *explain* the measurement: some `s/r` has to sit
+ * within one phase step of `m / 2^t`. Without that check a large multiple of the
+ * true order can be accepted, which is a valid period but usually yields no
+ * factor split.
+ *
+ * The smallest surviving candidate wins, since `a^(r/2)` is only useful when `r`
+ * is the true order rather than a multiple of it.
  */
 export function periodFromPhase(
   measured: number,
   precision: number,
   a: number,
   modulus: number,
+  maxMultiplier = 8,
 ): number | null {
   if (measured === 0) return null;
+  const phase = measured / precision;
   let x = measured;
   let y = precision;
   // Convergent recurrence: h_i = a_i h_{i-1} + h_{i-2}, likewise for k.
@@ -121,25 +151,24 @@ export function periodFromPhase(
   let h = 1;
   let kPrev = 1;
   let k = 0;
+  const candidates: number[] = [];
+
   while (y !== 0) {
     const term = Math.floor(x / y);
     [x, y] = [y, x - term * y];
     [hPrev, h] = [h, term * h + hPrev];
     [kPrev, k] = [k, term * k + kPrev];
-    if (k > 0) {
-      // The measured phase approximates s/r, and when gcd(s, r) > 1 the
-      // convergent lands on the *reduced* denominator r/gcd(s, r) rather than r
-      // itself. Testing small multiples recovers the real period instead of
-      // discarding an otherwise good measurement — N=33, a=28 has order 10 but
-      // yields a denominator of 5, which alone would be rejected.
-      for (let mult = 1; mult * k < modulus; mult++) {
-        const candidate = mult * k;
-        if (modPow(a, candidate, modulus) === 1) return candidate;
-      }
-    }
     if (k >= modulus) break;
+    for (let mult = 1; mult <= maxMultiplier; mult++) {
+      const r = k * mult;
+      if (r < 2) continue;
+      if (r >= modulus) break;
+      if (modPow(a, r, modulus) !== 1) continue;
+      const s = Math.round(phase * r);
+      if (Math.abs(phase - s / r) <= 1 / precision) candidates.push(r);
+    }
   }
-  return null;
+  return candidates.length ? Math.min(...candidates) : null;
 }
 
 /**

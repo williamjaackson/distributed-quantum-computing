@@ -6,7 +6,7 @@ import { Status } from '../components/Status';
 import type { EngineClient } from '../lib/engineClient';
 import { formatMs } from '../lib/format';
 import type { EngineInfo, ShorAttempt, ShorResult } from '../lib/protocol';
-import { isShorTarget, planShor, primeFactors } from '../lib/shor';
+import { isShorTarget, planShor, primeFactors, resolvablePeriod } from '../lib/shor';
 import { runShorSharded } from '../lib/shorSharded';
 
 /**
@@ -34,9 +34,8 @@ const MAX_ATTEMPTS = 10;
  * reliable end available when a number resists.
  */
 const RATIOS: { value: number; label: string }[] = [
-  { value: 1, label: 'largest N (1×) — a few more retries' },
-  { value: 1.25, label: 'balanced (1.25×)' },
-  { value: 1.5, label: 'cautious (1.5×)' },
+  { value: 1, label: 'largest N (1×) — only works if the order is small' },
+  { value: 1.5, label: 'balanced (1.5×)' },
   { value: 2, label: 'textbook (2×) — most reliable, smallest N' },
 ];
 
@@ -48,6 +47,38 @@ const RATIOS: { value: number; label: string }[] = [
  */
 const SHARDED_MAX_QUBITS = 29;
 
+/**
+ * Whether the counting register can resolve the period at all.
+ *
+ * Worth stating up front, because the failure mode is quiet: too small a register
+ * does not error, it simply never recovers a period. Continued fractions pin down
+ * `s/r` when `2^t > 2r²`, so the resolvable period grows only as the square root
+ * of the register — and a typical order is a decent fraction of N, which makes
+ * `sqrt(N)` the scale to compare against.
+ */
+function ResolutionNote({ target, countQubits }: { target: number; countQubits: number }) {
+  const limit = resolvablePeriod(countQubits);
+  const typical = Math.round(Math.sqrt(target));
+  const hopeless = limit < typical / 4;
+  const marginal = !hopeless && limit < typical;
+
+  if (!hopeless && !marginal) return null;
+  return (
+    <div className={`banner ${hopeless ? 'banner-critical' : ''}`}>
+      <div>
+        <strong>{hopeless ? 'This will not work.' : 'This may not find a period.'}</strong>{' '}
+        {countQubits} counting qubits resolve periods up to about{' '}
+        <strong>{limit.toLocaleString()}</strong>, because continued fractions need
+        2<sup>t</sup> &gt; 2r² — the reach grows only as the square root of the register. Orders
+        mod {target.toLocaleString()} are commonly in the thousands or more.{' '}
+        {hopeless
+          ? 'Raise the counting ratio or pick a smaller number; no amount of retrying fixes a register that cannot resolve the period.'
+          : 'Expect several attempts, and success only when the chosen base happens to have a small order.'}
+      </div>
+    </div>
+  );
+}
+
 export function AlgorithmsPanel({ client, info }: { client: EngineClient; info: EngineInfo }) {
   // Single module is bounded by isize::MAX; sharding lifts that by giving each
   // slice its own address space. Sharding is not free, but far cheaper here than
@@ -55,7 +86,10 @@ export function AlgorithmsPanel({ client, info }: { client: EngineClient; info: 
   const [sharded, setSharded] = useState(false);
   const budget = sharded ? SHARDED_MAX_QUBITS : info.maxQubits;
   const [qubits, setQubits] = useState(info.maxQubits);
-  const [ratio, setRatio] = useState(1);
+  // 1.5, not 1. Continued fractions resolve periods up to about 2^(t/2), so at
+  // ratio 1 the register can only resolve orders up to roughly sqrt(N) -- fine
+  // when the order happens to be small, unreliable in general.
+  const [ratio, setRatio] = useState(1.5);
   const [custom, setCustom] = useState('');
   const [seed, setSeed] = useState(7);
   const [coprimeOnly, setCoprimeOnly] = useState(true);
@@ -223,6 +257,10 @@ export function AlgorithmsPanel({ client, info }: { client: EngineClient; info: 
             classical shortcuts, so running the quantum routine on them would prove nothing.
           </div>
         </div>
+      )}
+
+      {layout && target && (
+        <ResolutionNote target={target} countQubits={layout.count} />
       )}
 
       {plan && layout && target && (

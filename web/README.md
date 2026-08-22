@@ -49,14 +49,31 @@ ancillas, which would dominate both the qubit budget and the runtime while
 teaching nothing about period finding — the part that is actually quantum.
 Grover's oracle is handled the same way.
 
-**The counting ratio, not the qubit total, decides how large a number fits.** The
-work register needs `n = ⌈log₂ N⌉`; the counting register gets `n × ratio` and
-sets the phase precision. So the budget goes as `n × (1 + ratio)`. Textbook Shor
-uses ratio 2, because recovering the period provably needs `2^t > N²` — but that
-bound is conservative, and testing small multiples of each continued-fraction
-convergent recovers the period even from a coarse estimate. Measured on 26
-qubits: ratio 2 reaches 255, ratio 1 reaches **8189 = 19 × 431** in one or two
-attempts. Hence the default is the aggressive end.
+**What actually limits the size is the counting register, and the bound is
+brutal.** Continued fractions pin down `s/r` only when `2^t > 2r²`, so a register
+of `t` qubits resolves periods up to roughly `2^(t/2)` — the reach grows as the
+*square root* of the register. Since a typical order mod N is a decent fraction of
+N, doubling the number you can factor costs two extra counting qubits on top of
+the work register.
+
+`resolvablePeriod(t)` reports that limit and the panel warns when the chosen
+configuration cannot reach it, because the failure is otherwise silent: too small
+a register does not error, it simply never recovers a period.
+
+An earlier version of this claimed ratio 1 reached 8189 on 26 qubits. **That was
+wrong, and the cause is worth recording.** The post-processing tried multiples of
+each convergent denominator to handle the `gcd(s, r) > 1` case, but unbounded —
+and the first convergent of any `m < 2^t` has denominator 1, so the loop
+degenerated into testing `r = 1, 2, 3, …` until `a^r ≡ 1`. That is a classical
+brute-force order search. It ignored the measurement completely (every phase gave
+the same answer) and would "factor" numbers no register could resolve — it
+reported 988027 = 991 × 997 from a 9-qubit counting register that can only reach
+periods of about 16.
+
+The fix bounds the multiplier and requires the recovered period to *explain* the
+measurement: some `s/r` must sit within one phase step of `m / 2^t`. Garbage
+measurements are now rejected, and the smallest surviving candidate wins, since
+`a^(r/2)` only splits N when `r` is the true order rather than a multiple.
 
 Failed attempts are ordinary, not bugs: a period can come out odd, or `a^(r/2)`
 can be −1 mod N, and either yields nothing, so the algorithm retries with a new
