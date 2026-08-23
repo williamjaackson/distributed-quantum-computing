@@ -80,6 +80,21 @@ separate button because looking is a separate act from computing, and a
 destructive one. A program that already measured everything itself is not
 offered it: there is nothing left to decide.
 
+Pressing it gives you **one draw**, which is what a machine gives you, and the
+panel says what that draw scored next to what the best of your shots scored —
+because one sample from a distribution where the answer has 0.1% of the
+probability is almost always a poor one, and a collapsed register is the most
+prominent thing on screen. Beside it is **Best shot**, which collapses onto the
+best-scoring outcome the shots actually produced. That is a selection among
+draws rather than a measurement, so it says so; but keeping the best of a
+thousand runs is how a sampling algorithm is used, and it puts the answer in the
+register instead of only in a panel.
+
+What "best" means is the program's business, not the app's: a program can
+implement `score(state, values)` — lower is better, `null` disqualifies — and
+the app ranks the shots with it. A program whose output is a single definite
+state has nothing to rank and leaves it out.
+
 A state vector is not a result. The amplitudes are not something any experiment
 can read, and the answer to "what does this program compute" is what comes back
 when you measure it, repeatedly. So measurement is not one of the views: it is

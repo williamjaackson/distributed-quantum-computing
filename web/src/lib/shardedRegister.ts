@@ -396,25 +396,44 @@ export class ShardedRegister implements Backend {
   async measure(qubit: number): Promise<number> {
     const [, , , r11] = await this.reducedOne(qubit);
     const outcome = this.rng.nextF64() < r11 ? 1 : 0;
-    const p = outcome === 1 ? r11 : 1 - r11;
-    if (p <= 0) return outcome;
-    const scale = 1 / Math.sqrt(p);
+    await this.project(qubit, outcome, outcome === 1 ? r11 : 1 - r11);
+    return outcome;
+  }
 
+  /** Project onto a known outcome — the same collapse, without the draw. */
+  async collapse(qubit: number, outcome: number): Promise<void> {
+    const [, , , r11] = await this.reducedOne(qubit);
+    const p = outcome === 1 ? r11 : 1 - r11;
+    if (p <= 0) {
+      throw new Error(`qubit ${qubit} cannot be ${outcome}: that branch holds no probability`);
+    }
+    await this.project(qubit, outcome, p);
+  }
+
+  /**
+   * Keep one branch and renormalise.
+   *
+   * A local qubit collapses inside every slice. A global one is a shard-id bit,
+   * so it collapses by *selection*: the slices on the unobserved side are
+   * emptied outright and no amplitude arithmetic happens at all.
+   */
+  private async project(qubit: number, outcome: number, p: number): Promise<void> {
+    if (p <= 0) return;
+    const scale = 1 / Math.sqrt(p);
     if (qubit < this.layout.localQubits) {
       await Promise.all(
         this.handles.map((h) => h.send({ kind: 'collapseLocal', qubit, outcome, scale })),
       );
-    } else {
-      const bit = 1 << (qubit - this.layout.localQubits);
-      await Promise.all(
-        this.handles.map((h) =>
-          (h.index & bit ? 1 : 0) === outcome
-            ? h.send({ kind: 'scale', factor: scale })
-            : h.send({ kind: 'clear' }),
-        ),
-      );
+      return;
     }
-    return outcome;
+    const bit = 1 << (qubit - this.layout.localQubits);
+    await Promise.all(
+      this.handles.map((h) =>
+        (h.index & bit ? 1 : 0) === outcome
+          ? h.send({ kind: 'scale', factor: scale })
+          : h.send({ kind: 'clear' }),
+      ),
+    );
   }
 
   /**

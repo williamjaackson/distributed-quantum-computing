@@ -56,6 +56,13 @@ export interface Backend {
   applyGate(name: string, qubits: number[], params: number[]): Promise<void>;
   measure(qubit: number): Promise<number>;
   /**
+   * Project one qubit onto a given outcome instead of a drawn one.
+   *
+   * What replaying a recorded shot needs: the outcome is already known, and
+   * drawing again would give a different one.
+   */
+  collapse(qubit: number, outcome: number): Promise<void>;
+  /**
    * Return to |0…0> and reseed the measurement draw.
    *
    * Taking N shots of a circuit that measures means running it N times, and
@@ -191,6 +198,10 @@ class WholeStateBackend implements Backend {
 
   async measure(qubit: number): Promise<number> {
     return this.sim.measure(qubit);
+  }
+
+  async collapse(qubit: number, outcome: number): Promise<void> {
+    this.sim.collapse(qubit, outcome);
   }
 
   async reset(seed: number): Promise<void> {

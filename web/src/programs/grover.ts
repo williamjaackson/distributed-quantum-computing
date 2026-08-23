@@ -72,6 +72,8 @@ export const grover: Program = {
     { id: 'measure', kind: 'toggle', label: 'Measure at the end', default: false },
   ],
   qubits: (v) => num(v, 'qubits', 4),
+  // The marked state or not: a search has exactly one thing it was looking for.
+  score: (state, v) => (state === bits(v, 'marked', num(v, 'qubits', 4)) ? 0 : 1),
   *build(v): Iterable<Step> {
     const n = num(v, 'qubits', 4);
     const marked = bits(v, 'marked', n);

@@ -162,6 +162,15 @@ export interface RunOptions {
   /** Which shot the recorded frames should be. */
   shotIndex: number;
   /**
+   * Which outcome a readout should land on.
+   *
+   * `draw` measures, which is what a machine does. `best` replays the
+   * best-scoring shot — legitimate, because you did take those shots and keeping
+   * the best of them is how a sampling algorithm is used, but it is a selection
+   * among draws rather than a measurement, so it says so.
+   */
+  readoutSource: 'draw' | 'best';
+  /**
    * Read every qubit out at the end, collapsing the register.
    *
    * Off by default, because a readout is not part of an algorithm: it is the act
@@ -188,7 +197,8 @@ export async function runProgram(
   values: InputValues,
   options: RunOptions,
 ): Promise<Timeline> {
-  const { execution, unlocked, shots, shotIndex, measureAtEnd, onProgress, cancelled } = options;
+  const { execution, unlocked, shots, shotIndex, measureAtEnd, readoutSource } = options;
+  const { onProgress, cancelled } = options;
   // Every limit below comes from the engine, so the module has to be up first.
   await loadWasm();
   const limits = engineLimits();
@@ -267,11 +277,27 @@ export async function runProgram(
     }
   }
 
+  // Rank the shots, if the program says what better means. The best one is
+  // usually not the likeliest, which is the whole reason a sampling algorithm
+  // takes more than one.
+  let bestShot: Timeline['bestShot'] = null;
+  if (program.score) {
+    outcomes.forEach((o, rank) => {
+      const score = program.score!(o.index, values);
+      if (score === null || !Number.isFinite(score)) return;
+      if (!bestShot || score < bestShot.score) {
+        bestShot = { index: o.index, score, count: o.count, rank: rank + 1 };
+      }
+    });
+  }
+
   // The readout, if asked for: every qubit in turn, so the collapse is something
   // you watch rather than a single jump. A qubit already definite does not move,
   // and an entangled partner moves without being touched.
   let readout: number | null = null;
   const readoutBits: string[] = [];
+  const replay: number | null =
+    readoutSource === 'best' && bestShot !== null ? (bestShot as { index: number }).index : null;
   if (backend && !error && measureAtEnd) {
     try {
       // `repeatRun` reset the register to take its shots, so put the trajectory
@@ -293,16 +319,26 @@ export async function runProgram(
       for (let q = 0; q < nQubits; q++) {
         const bit = `r${q}`;
         readoutBits.push(bit);
-        const step: Step = {
+        let outcome: number;
+        if (replay === null) {
+          outcome = await backend.measure(q);
+        } else {
+          // Replaying a shot: the outcome is known, so project rather than draw.
+          outcome = (replay >> q) & 1;
+          await backend.collapse(q, outcome);
+        }
+        bits[bit] = outcome;
+        readout |= outcome << q;
+        steps.push({
           kind: 'measure',
           qubit: q,
           bit,
-          stage: 'Readout',
-          note: `Look at qubit ${q} — it has to decide`,
-        };
-        bits[bit] = await backend.measure(q);
-        readout |= bits[bit] << q;
-        steps.push(step);
+          stage: replay === null ? 'Readout' : 'Best shot',
+          note:
+            replay === null
+              ? `Look at qubit ${q} — it has to decide`
+              : `Qubit ${q} came up ${outcome} in the best of the shots`,
+        });
         frames.push(await snapshot(backend, steps.length, bits, want));
       }
     } catch (e) {
@@ -351,7 +387,9 @@ export async function runProgram(
     measurement,
     circuitSteps,
     readout,
+    readoutSource: replay === null ? 'draw' : 'best',
     readoutBits,
+    bestShot,
     detail: {
       amps: frames[0].amps !== null,
       links: frames[0].links !== null,

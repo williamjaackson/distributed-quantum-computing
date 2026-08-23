@@ -31,6 +31,8 @@ interface TransportProps {
   onSpeed: (s: number) => void;
   /** Offered when the circuit has finished and nothing has read it out yet. */
   onMeasure?: () => void;
+  /** Offered alongside it when the program can say which shot was best. */
+  onBestShot?: () => void;
 }
 
 export function Transport(props: TransportProps) {
@@ -58,14 +60,25 @@ export function Transport(props: TransportProps) {
           <Icon shape="prev" />
         </button>
         {props.onMeasure && atEnd && !playing ? (
-          <button
-            className="btn btn-measure"
-            onClick={props.onMeasure}
-            title="Measure the register (space) — this collapses it"
-          >
-            <Icon shape="measure" />
-            Measure
-          </button>
+          <>
+            <button
+              className="btn btn-measure"
+              onClick={props.onMeasure}
+              title="Measure the register (space) — one draw, and it collapses"
+            >
+              <Icon shape="measure" />
+              Measure
+            </button>
+            {props.onBestShot && (
+              <button
+                className="btn"
+                onClick={props.onBestShot}
+                title="Collapse onto the best-scoring outcome among the shots you took"
+              >
+                Best shot
+              </button>
+            )}
+          </>
         ) : (
           <button
             className="btn btn-primary"

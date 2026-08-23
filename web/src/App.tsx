@@ -34,6 +34,7 @@ export function App() {
   const [shots, setShots] = useState(1024);
   const [shotIndex, setShotIndex] = useState(0);
   const [measureAtEnd, setMeasureAtEnd] = useState(false);
+  const [readoutSource, setReadoutSource] = useState<'draw' | 'best'>('draw');
   const [execution, setExecution] = useState<Execution>('auto');
   const [unlocked, setUnlocked] = useState(false);
   const [timeline, setTimeline] = useState<Timeline | null>(null);
@@ -85,6 +86,7 @@ export function App() {
       shots,
       shotIndex,
       measureAtEnd,
+      readoutSource,
       onProgress: (done: number) => {
         if (generation.current === mine) setProgress(done);
       },
@@ -97,7 +99,7 @@ export function App() {
     return () => {
       abandoned = true;
     };
-  }, [ready, program, values, shots, shotIndex, measureAtEnd, execution, unlocked]);
+  }, [ready, program, values, shots, shotIndex, measureAtEnd, readoutSource, execution, unlocked]);
 
   const player = usePlayer(timeline?.frames.length ?? 1);
 
@@ -105,11 +107,15 @@ export function App() {
   // be watched, so playback resumes from where the circuit ended rather than
   // letting the sticky-end jump straight past it.
   const resumeFrom = useRef<number | null>(null);
-  const requestMeasure = useCallback(() => {
-    if (!timeline || measureAtEnd) return;
-    resumeFrom.current = timeline.circuitSteps;
-    setMeasureAtEnd(true);
-  }, [timeline, measureAtEnd]);
+  const requestMeasure = useCallback(
+    (source: 'draw' | 'best') => {
+      if (!timeline) return;
+      resumeFrom.current = timeline.circuitSteps;
+      setReadoutSource(source);
+      setMeasureAtEnd(true);
+    },
+    [timeline],
+  );
   useEffect(() => {
     if (timeline && resumeFrom.current !== null && timeline.readout !== null) {
       player.play(resumeFrom.current);
@@ -125,6 +131,7 @@ export function App() {
     resetPlayhead();
     setShotIndex(0);
     setMeasureAtEnd(false);
+    setReadoutSource('draw');
   }, [programId, resetPlayhead]);
 
 
@@ -161,7 +168,7 @@ export function App() {
       switch (e.key) {
         case ' ':
           e.preventDefault();
-          if (player.atEnd && !player.playing && canMeasure) requestMeasure();
+          if (player.atEnd && !player.playing && canMeasure) requestMeasure('draw');
           else player.toggle();
           break;
         case 'ArrowRight':
@@ -380,7 +387,10 @@ export function App() {
             onStart={player.toStart}
             onEnd={player.toEnd}
             onSpeed={player.setSpeed}
-            onMeasure={canMeasure ? requestMeasure : undefined}
+            onMeasure={canMeasure ? () => requestMeasure('draw') : undefined}
+            onBestShot={
+              canMeasure && timeline?.bestShot ? () => requestMeasure('best') : undefined
+            }
           />
         </main>
 
@@ -395,7 +405,13 @@ export function App() {
                 collapsed={
                   timeline.readout === null
                     ? null
-                    : { index: timeline.readout, ket: ket(timeline.readout, timeline.nQubits) }
+                    : {
+                        index: timeline.readout,
+                        ket: ket(timeline.readout, timeline.nQubits),
+                        source: timeline.readoutSource,
+                        score: program.score?.(timeline.readout, timeline.values) ?? null,
+                        best: timeline.bestShot,
+                      }
                 }
                 hideBits={timeline.readoutBits}
               />

@@ -14,7 +14,14 @@ interface Props {
   bits: Record<string, number>;
   norm: number;
   /** The basis state the run collapsed to, once it has been read out. */
-  collapsed: { index: number; ket: string } | null;
+  collapsed: {
+    index: number;
+    ket: string;
+    source: 'draw' | 'best';
+    /** The program's score for it, when the program scores outcomes. */
+    score: number | null;
+    best: { index: number; score: number; count: number; rank: number } | null;
+  } | null;
   /** Bit names the readout created — folded into `collapsed` rather than listed. */
   hideBits: string[];
 }
@@ -47,10 +54,20 @@ export function OutputsPanel({ readouts, bits, norm, collapsed, hideBits }: Prop
 
       {collapsed && (
         <div className="out-row">
-          <span className="out-label">Collapsed to</span>
+          <span className="out-label">
+            {collapsed.source === 'best' ? 'Best shot, read out' : 'One draw, read out'}
+          </span>
           <span className="out-value">{collapsed.ket}</span>
           <span className="out-hint">
-            one draw — the register is definite now, and looking again would give the same answer
+            {collapsed.source === 'best'
+              ? `the best-scoring of the shots — it came up ${collapsed.best?.count ?? 0} time(s), ranked ${
+                  collapsed.best?.rank ?? 0
+                } by frequency`
+              : collapsed.score !== null && collapsed.best
+                ? `this draw scores ${collapsed.score.toFixed(4)}; the best of the shots scored ${collapsed.best.score.toFixed(
+                    4,
+                  )}. One measurement is one sample — the answer is the best of them`
+                : 'one sample — the register is definite now, and looking again would give the same answer'}
           </span>
         </div>
       )}

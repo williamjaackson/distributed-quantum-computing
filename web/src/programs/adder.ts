@@ -88,6 +88,14 @@ export const adder: Program = {
     { id: 'measure', kind: 'toggle', label: 'Measure the sum', default: false },
   ],
   qubits: (v) => layout(num(v, 'width', 2)).total,
+  // How far the sum register is from the arithmetic answer. Zero for every shot
+  // unless A is in superposition, where the branches carry different sums.
+  score: (state, v) => {
+    const n = num(v, 'width', 2);
+    const { a, b, carryOut } = layout(n);
+    const read = (qs: number[]) => qs.reduce((t, q, i) => t | (((state >> q) & 1) << i), 0);
+    return Math.abs(read([...b, carryOut]) - (read(a) + bits(v, 'b', n)));
+  },
   wireLabels: (v) => {
     const n = num(v, 'width', 2);
     return [

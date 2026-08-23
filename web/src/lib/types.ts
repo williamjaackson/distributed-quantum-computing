@@ -162,6 +162,17 @@ export interface Program {
   wireLabels?(values: InputValues): string[];
   build(values: InputValues, cl: Classical): Iterable<Step>;
   outputs?(ctx: ReadoutContext): Readout[];
+  /**
+   * How good an outcome is, lower being better; `null` disqualifies it.
+   *
+   * A sampling algorithm's answer is the best thing it drew, so something has to
+   * say what "best" means — and it is the program, not the app. Given this the
+   * shots can be ranked, the best one reported, and that one read out into the
+   * register, so the answer is visible where the collapse happens rather than
+   * only in a panel. A program whose output is a single definite state has
+   * nothing to rank and leaves it out.
+   */
+  score?(state: number, values: InputValues): number | null;
 }
 
 /**
@@ -262,6 +273,15 @@ export interface Timeline {
   circuitSteps: number;
   /** The basis state this run collapsed to, once it has been read out. */
   readout: number | null;
+  /** Whether the readout was a fresh draw or a replay of the best shot. */
+  readoutSource: 'draw' | 'best';
+  /**
+   * The best-scoring outcome among the shots, when the program scores them.
+   *
+   * `rank` is its position by frequency, which is the interesting part: the best
+   * outcome is usually not the likeliest one.
+   */
+  bestShot: { index: number; score: number; count: number; rank: number } | null;
   /** Classical bit names the readout created, so the panel can fold them up. */
   readoutBits: string[];
   /** Wall-clock milliseconds the engine spent executing the whole program. */
