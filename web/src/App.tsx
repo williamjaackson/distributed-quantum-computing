@@ -135,10 +135,12 @@ export function App() {
     [timeline, frame],
   );
 
-  // The readouts describe the *end* of the run, not the playhead. An answer that
-  // changes as you scrub is not an answer; the views are what show the state
-  // mid-circuit.
-  const finalFrame = timeline?.frames[timeline.frames.length - 1] ?? null;
+  // The readouts describe the end of the *circuit* — not the playhead, and not
+  // the end of the timeline. An answer that changes as you scrub is not an
+  // answer, and a readout collapses the state to one draw, which would turn
+  // "P(marked) = 96%" into "100%" and make the exact column contradict the shot
+  // column next to it. The collapse is reported separately, as one draw.
+  const finalFrame = timeline?.frames[timeline.circuitSteps] ?? null;
   const finalAnalysis = useMemo(
     () =>
       timeline && finalFrame

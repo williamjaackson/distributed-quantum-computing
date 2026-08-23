@@ -105,8 +105,11 @@ same inputs always give the same answer. What replaced it is more useful: for a
 circuit that measures, **"watching shot k of N"** — the frames are one
 trajectory out of N, and which one is now something you can say.
 
-Readouts describe the *end* of the run, not the playhead. An answer that changes
-as you scrub is not an answer; the views are what show the state mid-circuit.
+Readouts describe the end of the *circuit* — not the playhead, and not the end
+of the timeline. An answer that changes as you scrub is not an answer; and a
+readout collapses the state to one draw, which would turn "P(marked) = 96%" into
+"100%" and make the exact column contradict the shot column beside it. The
+collapse is reported separately, as the one draw it is.
 And a program's answer is what it measured, not what was most probable — Grover
 reports how many shots found the marked state, the adder whether all of them
 read the same sum, Deutsch–Jozsa's verdict is what the shots said. The
