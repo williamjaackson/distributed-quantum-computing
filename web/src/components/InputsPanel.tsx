@@ -6,6 +6,7 @@
  */
 import { resolve } from '../lib/inputs';
 import { bitString } from '../lib/format';
+import { Info } from './Info';
 import type { InputSpec, InputValue, InputValues } from '../lib/types';
 
 interface Props {
@@ -56,6 +57,7 @@ function Field({
         <div className="field">
           <div className="field-head">
             <span className="field-label">{spec.label}</span>
+            {spec.hint && <Info about={spec.label}>{spec.hint}</Info>}
             <span className="field-value">
               {shown}
               {spec.unit ? ` ${spec.unit}` : ''}
@@ -70,7 +72,6 @@ function Field({
             aria-label={spec.label}
             onChange={(e) => onChange(spec.id, Number(e.target.value))}
           />
-          {spec.hint && <span className="field-hint">{spec.hint}</span>}
         </div>
       );
     }
@@ -85,6 +86,7 @@ function Field({
             <span className="field-label" id={`label-${spec.id}`}>
               {spec.label}
             </span>
+            {spec.hint && <Info about={spec.label}>{spec.hint}</Info>}
           </div>
           <div className="stepper" role="group" aria-labelledby={`label-${spec.id}`}>
             <button
@@ -107,11 +109,8 @@ function Field({
             {spec.unit && <span className="unit">{spec.unit}</span>}
           </div>
           {spec.capByCeiling && max < declared && (
-            <span className="field-hint">
-              stopping at {max} — raise the ceiling under Execution to go further
-            </span>
+            <span className="field-hint">stops at {max}</span>
           )}
-          {spec.hint && <span className="field-hint">{spec.hint}</span>}
         </div>
       );
     }
@@ -125,6 +124,9 @@ function Field({
             <label className="field-label" htmlFor={`input-${spec.id}`}>
               {spec.label}
             </label>
+            {(chosen?.hint ?? spec.hint) && (
+              <Info about={spec.label}>{chosen?.hint ?? spec.hint ?? ''}</Info>
+            )}
           </div>
           <select
             id={`input-${spec.id}`}
@@ -138,9 +140,6 @@ function Field({
               </option>
             ))}
           </select>
-          {(chosen?.hint || spec.hint) && (
-            <span className="field-hint">{chosen?.hint ?? spec.hint}</span>
-          )}
         </div>
       );
     }
@@ -155,6 +154,7 @@ function Field({
         <div className="field">
           <div className="field-head">
             <span className="field-label">{spec.label}</span>
+            {spec.hint && <Info about={spec.label}>{spec.hint}</Info>}
             <span className="field-value">
               |{bitString(value, width)}⟩ = {value}
             </span>
@@ -173,7 +173,6 @@ function Field({
             ))}
             <span className="bit-value">q{width - 1}…q0</span>
           </div>
-          {spec.hint && <span className="field-hint">{spec.hint}</span>}
         </div>
       );
     }
@@ -181,7 +180,7 @@ function Field({
     case 'toggle': {
       const value = typeof raw === 'boolean' ? raw : spec.default;
       return (
-        <div className="field">
+        <div className="field field-inline">
           <label className="switch">
             <input
               type="checkbox"
@@ -190,7 +189,7 @@ function Field({
             />
             <span className="field-label">{spec.label}</span>
           </label>
-          {spec.hint && <span className="field-hint">{spec.hint}</span>}
+          {spec.hint && <Info about={spec.label}>{spec.hint}</Info>}
         </div>
       );
     }

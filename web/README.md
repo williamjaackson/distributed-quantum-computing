@@ -15,6 +15,18 @@ came out on the right. The answer has a column of its own because it was ending
 up below the fold of a scrolling sidebar, which is the one place an answer must
 never be.
 
+Explanation lives behind an ⓘ, not in the layout. The dividing line: if it
+*explains*, it hides; if it is a fact about what you are looking at — a count, a
+percentage, a caveat about what has been truncated — it stays visible, because
+hiding those would be hiding the data. Data rows reveal their note on hover
+rather than carrying an ⓘ each, since the row is already a hit target and six
+more small buttons is not simpler.
+
+Controls are counted too. Speed was six buttons and is one select; the shot
+count was four and is one. What is left is what was asked for: start, back,
+play/pause, forward, end, a scrubber, and the measurement buttons that appear
+only once the circuit has finished.
+
 ## The shape of it
 
 One source of truth: `runProgram` executes a program one step at a time and

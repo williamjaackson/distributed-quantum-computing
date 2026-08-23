@@ -2,12 +2,18 @@
  * What the run produced: the program's own readouts, the classical bits, and
  * the engine's norm as a sanity check.
  *
+ * A row's explanation is on hover rather than under it. Every one of these used
+ * to be a wrapped line of prose in a 300px column, which is most of why this
+ * panel was three screens long. Hover rather than an ⓘ per row: the row is
+ * already a hit target, and six more little buttons is not simpler.
+ *
  * These describe the end of the run, deliberately. A readout is the answer, and
  * an answer that changed as you scrubbed the timeline would not be one — the
  * views are what show the state mid-circuit. The norm is the exception: it is a
  * property of wherever the playhead is, and worth watching there.
  */
 import type { Readout } from '../lib/types';
+import { useTip } from './Tooltip';
 
 interface Props {
   readouts: Readout[];
@@ -27,6 +33,7 @@ interface Props {
 }
 
 export function OutputsPanel({ readouts, bits, norm, collapsed, hideBits }: Props) {
+  const { bind, node } = useTip();
   const hero = readouts.find((r) => r.hero);
   const rest = readouts.filter((r) => r !== hero);
   const hidden = new Set(hideBits);
@@ -45,30 +52,38 @@ export function OutputsPanel({ readouts, bits, norm, collapsed, hideBits }: Prop
       )}
 
       {rest.map((r) => (
-        <div className="out-row" key={r.label}>
+        <div
+          className={`out-row${r.hint ? ' has-note' : ''}`}
+          key={r.label}
+          {...(r.hint ? bind(r.hint, true) : {})}
+        >
           <span className="out-label">{r.label}</span>
           <span className="out-value">{r.value}</span>
-          {r.hint && <span className="out-hint">{r.hint}</span>}
         </div>
       ))}
 
       {collapsed && (
-        <div className="out-row">
+        <div
+          className="out-row has-note"
+          {...bind(
+            collapsed.source === 'best'
+              ? `The best-scoring of the shots — it came up ${
+                  collapsed.best?.count ?? 0
+                } time(s), ranked ${collapsed.best?.rank ?? 0} by frequency. Selecting the best of many draws is how a sampling algorithm is used, but it is a selection, not a measurement.`
+              : collapsed.score !== null && collapsed.best
+                ? `This draw scores ${collapsed.score.toFixed(
+                    4,
+                  )}; the best of the shots scored ${collapsed.best.score.toFixed(
+                    4,
+                  )}. One measurement is one sample — the answer is the best of them.`
+                : 'One sample. The register is definite now, and looking again would give the same answer.',
+            true,
+          )}
+        >
           <span className="out-label">
-            {collapsed.source === 'best' ? 'Best shot, read out' : 'One draw, read out'}
+            {collapsed.source === 'best' ? 'Best shot' : 'One draw'}
           </span>
           <span className="out-value">{collapsed.ket}</span>
-          <span className="out-hint">
-            {collapsed.source === 'best'
-              ? `the best-scoring of the shots — it came up ${collapsed.best?.count ?? 0} time(s), ranked ${
-                  collapsed.best?.rank ?? 0
-                } by frequency`
-              : collapsed.score !== null && collapsed.best
-                ? `this draw scores ${collapsed.score.toFixed(4)}; the best of the shots scored ${collapsed.best.score.toFixed(
-                    4,
-                  )}. One measurement is one sample — the answer is the best of them`
-                : 'one sample — the register is definite now, and looking again would give the same answer'}
-          </span>
         </div>
       )}
 
@@ -89,13 +104,14 @@ export function OutputsPanel({ readouts, bits, norm, collapsed, hideBits }: Prop
         )}
       </div>
 
-      <div className="out-row">
+      <div
+        className="out-row has-note"
+        {...bind('Total probability at the playhead. 1 for any correct unitary sequence.', true)}
+      >
         <span className="out-label">Norm</span>
         <span className="out-value">{norm.toFixed(12)}</span>
-        <span className="out-hint">
-          total probability at the playhead — 1 for any correct unitary sequence
-        </span>
       </div>
+      {node}
     </div>
   );
 }

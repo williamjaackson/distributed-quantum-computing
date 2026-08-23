@@ -155,9 +155,6 @@ export function ComplexPlaneView({ analysis }: ViewProps) {
         <span className="legend-item">outer ring is magnitude {magnitude(scale)}</span>
       </div>
       <p className="note">
-        {scale < 1
-          ? `Radius is scaled to the largest amplitude, ${magnitude(scale)}: a state spread over ${amplitudeCount.toLocaleString()} basis states cannot have a big one. Angles are unscaled — each is exactly the phase. `
-          : ''}
         {supportTruncated
           ? `The ${support.length} largest of ${amplitudeCount.toLocaleString()} amplitudes`
           : `${support.length} of ${amplitudeCount.toLocaleString()} amplitudes are non-zero`}

@@ -18,6 +18,7 @@
 import type { Analysis } from '../lib/analysis';
 import { SHOT_OPTIONS } from '../lib/runner';
 import { ket, pct } from '../lib/format';
+import { Info } from './Info';
 import type { Timeline } from '../lib/types';
 
 interface Props {
@@ -33,28 +34,36 @@ const ROWS = 6;
 export function MeasurementPanel({ timeline, analysis, shots, onShots }: Props) {
   const { measurement } = timeline;
   const total = measurement.taken || 1;
+  // A circuit that measures ends in a different state every shot, so there is no
+  // single exact distribution to compare against and the column would be a lie.
+  const comparable = measurement.method === 'sampled';
   const shown = timeline.shots.slice(0, ROWS);
   const rest = timeline.shots.slice(ROWS);
   const restCount = rest.reduce((a, o) => a + o.count, 0);
   const exact = new Map(analysis.support.map((e) => [e.index, e.prob]));
-  // A circuit that measures ends in a different state every shot, so there is no
-  // single exact distribution to compare against and the column would be a lie.
-  const comparable = measurement.method === 'sampled';
 
   return (
     <section className="card">
-      <h2 className="card-title">Measured</h2>
-
-      <div className="controls" style={{ marginBottom: 6 }}>
-        <span className="field-hint">shots</span>
-        <div className="speed-buttons">
+      <h2 className="card-title">
+        Measured{' '}
+        <Info about="the measured outcomes">
+          {comparable
+            ? 'The circuit never measures, so every shot is drawn from one final state and the exact probability is known. The gap between sampled and exact is the shot noise — take more shots and it closes.'
+            : 'The circuit measures, so every shot is a separate run of it and there is no single final state to compare against.'}
+        </Info>
+        <select
+          className="compact heading-control"
+          value={shots}
+          aria-label="Shots"
+          onChange={(e) => onShots(Number(e.target.value))}
+        >
           {SHOT_OPTIONS.map((n) => (
-            <button key={n} aria-pressed={n === shots} onClick={() => onShots(n)}>
-              {n >= 1024 ? `${n / 1024}k` : n}
-            </button>
+            <option key={n} value={n}>
+              {n.toLocaleString()} shots
+            </option>
           ))}
-        </div>
-      </div>
+        </select>
+      </h2>
 
       {timeline.shots.length === 0 ? (
         <p className="field-hint">Nothing measured — the run did not finish.</p>
@@ -87,13 +96,9 @@ export function MeasurementPanel({ timeline, analysis, shots, onShots }: Props) 
           </table>
 
           <p className="note">
-            {measurement.taken.toLocaleString()} shot
-            {measurement.taken === 1 ? '' : 's'} of {timeline.shots.length.toLocaleString()} distinct
-            outcome{timeline.shots.length === 1 ? '' : 's'}.{' '}
-            {comparable
-              ? 'The circuit never measures, so every shot is drawn from one final state — the gap between sampled and exact is the shot noise.'
-              : 'The circuit measures, so every shot is a separate run and there is no single final state to compare against.'}
-            {measurement.note ? ` ${measurement.note}.` : ''}
+            {timeline.shots.length.toLocaleString()} distinct outcome
+            {timeline.shots.length === 1 ? '' : 's'} in {measurement.taken.toLocaleString()} shots
+            {measurement.note ? ` — ${measurement.note}` : ''}
           </p>
         </>
       )}

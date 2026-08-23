@@ -19,6 +19,7 @@ import type { InputValue, InputValues, Readout, ReadoutContext, Timeline } from 
 import { usePlayer } from './lib/usePlayer';
 import { PROGRAMS, programById } from './programs';
 import { VIEWS, viewById } from './views';
+import { Info } from './components/Info';
 import { InputsPanel } from './components/InputsPanel';
 import { OutputsPanel } from './components/OutputsPanel';
 import { MeasurementPanel } from './components/MeasurementPanel';
@@ -270,7 +271,9 @@ export function App() {
       <div className="body">
         <aside className="sidebar">
           <section className="card">
-            <h2 className="card-title">Program</h2>
+            <h2 className="card-title">
+              Program <Info about={program.name}>{program.detail}</Info>
+            </h2>
             <select
               value={programId}
               onChange={(e) => chooseProgram(e.target.value)}
@@ -282,7 +285,6 @@ export function App() {
                 </option>
               ))}
             </select>
-            <p style={{ marginTop: 8, fontSize: 12 }}>{program.detail}</p>
           </section>
 
           <section className="card">
@@ -362,6 +364,7 @@ export function App() {
             <div className="stage-head">
               <h2>{view.name}</h2>
               <p>{view.subtitle}</p>
+              <Info about={`the ${view.name.toLowerCase()} view`}>{view.about}</Info>
             </div>
             <div className="stage-body">
               {timeline && frame && analysis ? (

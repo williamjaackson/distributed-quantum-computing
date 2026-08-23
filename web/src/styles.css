@@ -243,6 +243,10 @@ button {
   padding: 12px 16px 0;
 }
 
+.stage-head {
+  align-items: center;
+}
+
 .stage-head h2 {
   font-size: 14px;
   font-weight: 600;
@@ -490,6 +494,13 @@ input[type='range']::-moz-range-thumb {
   padding-top: 0;
 }
 
+/* A toggle and its ⓘ belong on one line; the grid would stack them. */
+.field-inline {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .field-head {
   display: flex;
   align-items: baseline;
@@ -672,11 +683,42 @@ select {
   white-space: nowrap;
 }
 
+/* A row with something more to say. The dotted rule is the only hint that
+   hovering will say it — cheaper than a line of prose and quieter than a
+   button. */
+.out-row.has-note {
+  cursor: help;
+}
+
+.out-row.has-note .out-label {
+  border-bottom: 1px dotted var(--axis);
+}
+
 .out-hint {
   flex-basis: 100%;
   font-size: 11px;
   color: var(--text-muted);
   margin-top: -4px;
+}
+
+/* A control small enough to sit on a heading line. */
+select.compact {
+  width: auto;
+  font-size: 12px;
+  padding: 2px 6px;
+}
+
+.card-title select.heading-control {
+  margin-left: auto;
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--text-secondary);
+}
+
+.card-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
 }
 
 .bit-pills {
@@ -805,6 +847,34 @@ svg text.mono {
   cursor: default;
 }
 
+/* The ⓘ that holds an explanation until it is asked for. Sized to sit on a
+   text baseline without pushing the line height around. */
+.info {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  padding: 0;
+  border: 1px solid var(--axis);
+  border-radius: 50%;
+  background: none;
+  color: var(--text-muted);
+  font-size: 9px;
+  font-family: var(--font);
+  font-style: italic;
+  line-height: 1;
+  cursor: help;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  vertical-align: 1px;
+}
+
+.info:hover,
+.info.is-open {
+  border-color: var(--blue);
+  color: var(--blue);
+}
+
 .tip {
   position: fixed;
   pointer-events: none;
@@ -818,4 +888,13 @@ svg text.mono {
   transform: translate(-50%, calc(-100% - 10px));
   white-space: pre;
   font-family: var(--mono);
+}
+
+/* Prose wraps and reads in the UI face; only tabular tooltips stay monospaced. */
+.tip-prose {
+  white-space: normal;
+  font-family: var(--font);
+  font-size: 12px;
+  max-width: 260px;
+  text-align: left;
 }

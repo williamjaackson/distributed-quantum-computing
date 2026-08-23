@@ -239,10 +239,10 @@ export function QubitMapView({ timeline, index, analysis }: ViewProps) {
       <p className="note">
         {links === null
           ? timeline.detail.linksReason === 'sharded'
-            ? 'Links are off while sharded: a two-qubit reduced matrix straddling shards has no slice-local form, so the map shows no link rather than guessing one. The dials are exact.'
-            : `Links are off: a correlation needs one pass over the state per pair, and ${nQubits} qubits makes that too slow to do every step. The dials are exact.`
+            ? 'Links off — no slice-local form when sharded. The dials are exact.'
+            : `Links off — too costly at ${nQubits} qubits. The dials are exact.`
           : chords.length === 0
-            ? 'No correlations: every qubit is independent of the others.'
+            ? 'No correlations — every qubit is independent of the others.'
             : `${total} correlated pair${total === 1 ? '' : 's'}, strongest ${fixed(
                 chords[total - 1].c,
                 3,

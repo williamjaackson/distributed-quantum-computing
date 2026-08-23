@@ -132,11 +132,6 @@ export function PolarisationView({ timeline, index, analysis }: ViewProps) {
           touched by this step
         </span>
       </div>
-      <p className="note">
-        North is |0⟩, south is |1⟩; anywhere on the equator is a 50/50 superposition and the angle
-        around it is the phase. A dot at the centre means the qubit is entangled — all of its
-        information is in the correlations, none in the qubit.
-      </p>
       {node}
     </div>
   );

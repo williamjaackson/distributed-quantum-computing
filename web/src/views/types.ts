@@ -18,5 +18,12 @@ export interface ViewDef {
   name: string;
   /** Sits beside the view title — what this projection is good for. */
   subtitle: string;
+  /**
+   * How to read it, behind the ⓘ.
+   *
+   * This used to be a paragraph under every chart. It is worth having and it is
+   * not worth permanent screen space: you read it once.
+   */
+  about: string;
   Component: (props: ViewProps) => React.ReactNode;
 }

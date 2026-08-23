@@ -10,7 +10,7 @@
  * *measure*, because looking is a separate act from computing and a destructive
  * one — so it is asked for rather than assumed.
  */
-import { SPEEDS } from '../lib/usePlayer';
+import { BASE_INTERVAL_MS, SPEEDS } from '../lib/usePlayer';
 import { describe, engineCall } from '../lib/format';
 import type { Step } from '../lib/types';
 
@@ -114,21 +114,19 @@ export function Transport(props: TransportProps) {
           onChange={(e) => props.onSeek(Number(e.target.value))}
         />
 
-        <div className="speed">
-          <span>speed</span>
-          <div className="speed-buttons">
-            {SPEEDS.map((s) => (
-              <button
-                key={s}
-                aria-pressed={s === speed}
-                onClick={() => props.onSpeed(s)}
-                title={`${s}× — ${Math.round(700 / s)} ms per step`}
-              >
-                {s}×
-              </button>
-            ))}
-          </div>
-        </div>
+        <select
+          className="compact"
+          value={speed}
+          aria-label="Playback speed"
+          title="Milliseconds per step"
+          onChange={(e) => props.onSpeed(Number(e.target.value))}
+        >
+          {SPEEDS.map((s) => (
+            <option key={s} value={s}>
+              {s}× · {Math.round(BASE_INTERVAL_MS / s)} ms
+            </option>
+          ))}
+        </select>
       </div>
     </div>
   );

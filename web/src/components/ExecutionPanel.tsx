@@ -17,6 +17,7 @@ import type { EngineLimits, Execution } from '../lib/backend';
 import { formatBytes } from '../lib/backend';
 import { AMPS_QUBIT_LIMIT, INTERACTIVE_QUBITS, ceiling } from '../lib/runner';
 import type { Timeline } from '../lib/types';
+import { Info } from './Info';
 
 interface Props {
   execution: Execution;
@@ -53,7 +54,30 @@ export function ExecutionPanel({
   const cap = ceiling(execution, unlocked, limits);
   return (
     <section className="card">
-      <h2 className="card-title">Execution</h2>
+      <h2 className="card-title">
+        Execution{' '}
+        <Info about="execution">
+          {`${chosen.hint}. ` +
+            (timeline
+              ? `Right now: ${timeline.backend.description}, recording ${
+                  timeline.detail.amps ? 'every amplitude' : 'a summary'
+                } per step, correlation links ${timeline.detail.links ? 'on' : 'off'}. ` +
+                `Full states stop at ${AMPS_QUBIT_LIMIT} qubits; past that a frame keeps the Bloch vectors and the largest amplitudes, which is all a view draws. `
+              : '') +
+            (limits
+              ? `This build holds ${limits.maxWholeState} qubits in one module (${formatBytes(
+                  2 ** limits.maxWholeState * 16,
+                )}), returns full arrays out of WASM to ${limits.fullArrayLimit}, and puts ${
+                  limits.maxShardQubits
+                } qubits in a shard. Sharded runs are capped at ${ceiling(
+                  'sharded',
+                  true,
+                  limits,
+                )} here as a guard rail, not by the engine — past that the limit is the machine's memory.`
+              : '')}
+        </Info>
+      </h2>
+
       <select
         value={execution}
         onChange={(e) => onExecution(e.target.value as Execution)}
@@ -65,66 +89,22 @@ export function ExecutionPanel({
           </option>
         ))}
       </select>
-      <span className="field-hint">{chosen.hint}</span>
 
-      <div className="field">
+      <div className="field field-inline">
         <label className="switch">
-          <input
-            type="checkbox"
-            checked={unlocked}
-            onChange={(e) => onUnlocked(e.target.checked)}
-          />
+          <input type="checkbox" checked={unlocked} onChange={(e) => onUnlocked(e.target.checked)} />
           <span className="field-label">Go past {INTERACTIVE_QUBITS} qubits</span>
         </label>
-        <span className="field-hint">
+        <Info about="the qubit ceiling">
           {unlocked
-            ? `Ceiling is now ${cap} qubits${
-                limits ? ` (${formatBytes(2 ** cap * 16)} of state)` : ''
-              }. A step costs a pass over the state per qubit, so expect a wait rather than playback.`
-            : `Ceiling is ${INTERACTIVE_QUBITS} qubits — the last size where a step is still about 60 ms.${
-                limits ? ` Turn this on to reach ${ceiling(execution, true, limits)}.` : ''
-              }`}
-        </span>
+            ? `The ceiling is ${cap} qubits. A step costs a pass over the state per qubit, so expect a wait rather than playback.`
+            : `${INTERACTIVE_QUBITS} qubits is the last size where a step is still about 60 ms — 10 ms at 16, 250 ms at 24. Turn this on to reach ${ceiling(
+                execution,
+                true,
+                limits,
+              )}.`}
+        </Info>
       </div>
-
-      {timeline && (
-        <>
-          <div className="out-row">
-            <span className="out-label">Holding the state</span>
-            <span className="out-value">{timeline.backend.sharded ? 'sharded' : 'one module'}</span>
-            <span className="out-hint">{timeline.backend.description}</span>
-          </div>
-          <div className="out-row">
-            <span className="out-label">Recorded per step</span>
-            <span className="out-value">
-              {timeline.detail.amps ? 'every amplitude' : 'summary'}
-            </span>
-            <span className="out-hint">
-              {timeline.detail.amps
-                ? `${formatBytes(timeline.amplitudeCount * 16)} × ${timeline.frames.length} frames`
-                : `Bloch vectors and the largest amplitudes — full states stop at ${AMPS_QUBIT_LIMIT} qubits`}
-            </span>
-          </div>
-          <div className="out-row">
-            <span className="out-label">Correlation links</span>
-            <span className="out-value">{timeline.detail.links ? 'on' : 'off'}</span>
-            <span className="out-hint">
-              {timeline.detail.links
-                ? 'one pass over the state per qubit pair, every step'
-                : 'too costly at this register size'}
-            </span>
-          </div>
-        </>
-      )}
-
-      {limits && (
-        <p className="note">
-          This build: {limits.maxWholeState} qubits in one module ({formatBytes(2 ** limits.maxWholeState * 16)}),
-          full arrays out of WASM to {limits.fullArrayLimit}, {limits.maxShardQubits} qubits a shard.
-          Sharded runs are capped at {ceiling('sharded', true, limits)} qubits here as a guard
-          rail, not by the engine — past that the limit is the machine's memory.
-        </p>
-      )}
     </section>
   );
 }

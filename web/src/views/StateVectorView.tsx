@@ -13,7 +13,7 @@
  * more states than there are pixels. The note says when that is happening.
  */
 import type { BasisEntry } from '../lib/analysis';
-import { bitString, bytes, complex, fixed, ket, pct } from '../lib/format';
+import { bitString, complex, fixed, ket, pct } from '../lib/format';
 import { useMeasure } from '../lib/useMeasure';
 import { useTip } from '../components/Tooltip';
 import type { ViewProps } from './types';
@@ -210,12 +210,8 @@ export function StateVectorView({ analysis }: ViewProps) {
         </tbody>
       </table>
       {support.length > 8 && (
-        <p className="note">Showing the 8 largest of {support.length} occupied states.</p>
+        <p className="note">The 8 largest of {support.length.toLocaleString()} occupied states.</p>
       )}
-      <p className="note">
-        Register: {nQubits} qubits, {count.toLocaleString()} amplitudes, {bytes(count * 16)} in the
-        engine.
-      </p>
       {node}
     </div>
   );
