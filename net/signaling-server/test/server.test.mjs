@@ -65,6 +65,41 @@ test('create-room then join-room introduces two peers to each other', async (t) 
   guest.close();
 });
 
+test('a host can choose an available room code', async (t) => {
+  const port = nextPort();
+  const server = await startServer(port);
+  t.after(() => server.kill());
+
+  const host = await connect(port);
+  host.send(JSON.stringify({ t: 'create-room', room: 'my-lab' }));
+  const created = await nextMessage(host);
+  assert.equal(created.t, 'room-created');
+  assert.equal(created.room, 'MY-LAB');
+
+  const collision = await connect(port);
+  collision.send(JSON.stringify({ t: 'create-room', room: 'MY-LAB' }));
+  assert.deepEqual(await nextMessage(collision), {
+    t: 'error',
+    message: 'room MY-LAB is already in use',
+  });
+
+  host.close();
+  collision.close();
+});
+
+test('invalid custom room codes are rejected', async (t) => {
+  const port = nextPort();
+  const server = await startServer(port);
+  t.after(() => server.kill());
+
+  const host = await connect(port);
+  host.send(JSON.stringify({ t: 'create-room', room: '-no spaces-' }));
+  const reply = await nextMessage(host);
+  assert.equal(reply.t, 'error');
+  assert.match(reply.message, /3–24 letters/);
+  host.close();
+});
+
 test('signal messages relay verbatim to the named peer only', async (t) => {
   const port = nextPort();
   const server = await startServer(port);

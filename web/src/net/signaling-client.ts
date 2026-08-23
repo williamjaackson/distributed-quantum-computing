@@ -80,8 +80,8 @@ export class SignalingClient extends Emitter<SignalingEvents> {
     }
   }
 
-  createRoom(): void {
-    this.#send({ t: SIG.CREATE_ROOM });
+  createRoom(room?: string): void {
+    this.#send({ t: SIG.CREATE_ROOM, ...(room ? { room } : {}) });
   }
 
   joinRoom(room: string): void {

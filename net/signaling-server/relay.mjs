@@ -18,7 +18,7 @@
 //
 // Protocol (JSON frames over one WebSocket per browser) — see
 // web/src/net/protocol.ts's SIG constants for the shared vocabulary:
-//   -> {t:'create-room'}
+//   -> {t:'create-room', room?}                       (optional host-chosen code)
 //   <- {t:'room-created', room, peerId}
 //   -> {t:'join-room', room}
 //   <- {t:'joined', peerId, peers:[{peerId}, ...]}   (existing peers in the room)
@@ -34,6 +34,7 @@
 import { randomBytes, randomUUID } from 'node:crypto';
 
 const ROOM_CODE_ALPHABET = '23456789ABCDEFGHJKMNPQRSTUVWXYZ';
+const CUSTOM_ROOM_CODE = /^(?=.{3,24}$)[A-Z0-9](?:[A-Z0-9-]*[A-Z0-9])$/;
 export const ROOM_IDLE_TIMEOUT_MS = 2 * 60 * 60 * 1000; // rooms with no traffic this long are dropped
 export const MAX_MESSAGE_BYTES = 64 * 1024; // signaling payloads (SDP/ICE) are small; this is generous headroom
 export const MAX_PEERS_PER_ROOM = 256; // far above any realistic session, not a hard protocol limit
@@ -43,6 +44,12 @@ function makeRoomCode() {
   let code = '';
   for (const b of bytes) code += ROOM_CODE_ALPHABET[b % ROOM_CODE_ALPHABET.length];
   return code;
+}
+
+function requestedRoomCode(value) {
+  if (value === undefined || value === null || String(value).trim() === '') return null;
+  const code = String(value).trim().toUpperCase();
+  return CUSTOM_ROOM_CODE.test(code) ? code : undefined;
 }
 
 /**
@@ -96,10 +103,21 @@ export function attachRoomRelay(wss) {
 
       switch (msg.t) {
         case 'create-room': {
-          let code;
-          do {
-            code = makeRoomCode();
-          } while (rooms.has(code));
+          const wanted = requestedRoomCode(msg.room);
+          if (wanted === undefined) {
+            send(ws, { t: 'error', message: 'room code must be 3–24 letters, numbers, or hyphens' });
+            return;
+          }
+          let code = wanted;
+          if (code && rooms.has(code)) {
+            send(ws, { t: 'error', message: `room ${code} is already in use` });
+            return;
+          }
+          if (!code) {
+            do {
+              code = makeRoomCode();
+            } while (rooms.has(code));
+          }
           peerId = randomUUID();
           rooms.set(code, { peers: new Map([[peerId, ws]]), lastActivity: Date.now() });
           joinedRoom = code;
@@ -108,7 +126,8 @@ export function attachRoomRelay(wss) {
         }
 
         case 'join-room': {
-          const room = rooms.get(msg.room);
+          const code = String(msg.room ?? '').trim().toUpperCase();
+          const room = rooms.get(code);
           if (!room) {
             send(ws, { t: 'join-failed', reason: 'no such room' });
             return;
@@ -120,7 +139,7 @@ export function attachRoomRelay(wss) {
           peerId = randomUUID();
           const existingPeers = [...room.peers.keys()].map((id) => ({ peerId: id }));
           room.peers.set(peerId, ws);
-          joinedRoom = msg.room;
+          joinedRoom = code;
           touch(room);
           send(ws, { t: 'joined', peerId, peers: existingPeers });
           broadcastToRoom(room, { t: 'peer-joined', peerId }, peerId);

@@ -58,7 +58,7 @@ export type SessionWorker = (
 export interface SignalingLike {
   peerId: string | null;
   connect(): Promise<void>;
-  createRoom(): void;
+  createRoom(room?: string): void;
   joinRoom(room: string): void;
   sendSignal(to: string, data: unknown): void;
   on<K extends keyof SignalingEvents & string>(
@@ -163,7 +163,7 @@ export class Session {
   // --- hosting ---
 
   /** Create a room and start accepting viewers. */
-  async share(): Promise<void> {
+  async share(requestedRoom?: string): Promise<void> {
     if (this.role !== 'solo') return;
     try {
       const signaling = this.#transport.signaling(this.#signalingUrl());
@@ -172,7 +172,7 @@ export class Session {
         signaling.on('room-created', resolve);
         signaling.on('server-error', (e) => reject(new Error(e.message)));
       });
-      signaling.createRoom();
+      signaling.createRoom(requestedRoom?.trim().toUpperCase());
       const { room, peerId } = await created;
 
       const mesh = this.#transport.mesh(signaling, peerId);

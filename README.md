@@ -30,6 +30,10 @@ read-only mode. When the host measures, the shot count is divided across the
 host and connected viewers; their histograms are merged and the same result is
 shown everywhere.
 
+Hosts may enter a memorable 3–24 character room code before sharing, or leave
+it blank for a generated code. Codes are case-insensitive and must contain only
+letters, numbers, and internal hyphens.
+
 The Sharing card reports the live machine count, shot split, and register
 capacity. It also previews the power-of-two shard group, qubit ceiling, and RAM
 represented by the planned Expand mode. Expand is shown as unavailable until

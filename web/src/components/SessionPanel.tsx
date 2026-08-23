@@ -31,6 +31,7 @@ export function SessionPanel({
   shots,
   qubitCeiling,
   maxShardQubits,
+  localLayout,
 }: {
   session: Session;
   mode: DistributedMode;
@@ -38,8 +39,12 @@ export function SessionPanel({
   shots: number;
   qubitCeiling: number;
   maxShardQubits: number | null;
+  localLayout: string | null;
 }) {
   const [copied, setCopied] = useState(false);
+  const [roomCode, setRoomCode] = useState('');
+  const roomCodeValid =
+    roomCode === '' || /^(?=.{3,24}$)[A-Z0-9](?:[A-Z0-9-]*[A-Z0-9])$/.test(roomCode);
   const linkInput = useRef<HTMLInputElement>(null);
 
   const copyLink = async () => {
@@ -76,11 +81,29 @@ export function SessionPanel({
             shots, so every viewer makes the histogram arrive faster.
           </Info>
         </h2>
-        <button className="btn btn-primary" onClick={() => void session.share()}>
+        <label className="field">
+          <span className="field-label">Room code</span>
+          <input
+            value={roomCode}
+            maxLength={24}
+            placeholder="leave blank for a random code"
+            aria-label="Room code"
+            aria-invalid={!roomCodeValid}
+            onChange={(e) => setRoomCode(e.target.value.trimStart().toUpperCase())}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && roomCodeValid) void session.share(roomCode || undefined);
+            }}
+          />
+        </label>
+        <button
+          className="btn btn-primary"
+          disabled={!roomCodeValid}
+          onClick={() => void session.share(roomCode || undefined)}
+        >
           Share this session
         </button>
         <p className="field-hint">
-          Others watch this run live and their machines help take the shots.
+          3–24 letters, numbers, or hyphens. Leave blank for a random code.
         </p>
         {session.error && <p className="error">{session.error}</p>}
       </section>
@@ -142,14 +165,21 @@ export function SessionPanel({
             <dt>Register capacity</dt>
             <dd>{qubitCeiling} qubits (unchanged in Shots)</dd>
           </div>
+          {localLayout && (
+            <div>
+              <dt>Active local layout</dt>
+              <dd>{localLayout}</dd>
+            </div>
+          )}
         </dl>
         <details className="capacity-details">
           <summary>Expand capacity preview</summary>
           <p className="field-hint">
             {expand.usableShards} usable shard{expand.usableShards === 1 ? '' : 's'} across the
-            largest power-of-two group: up to {expand.maxQubits} qubits, {bytes(expand.bytesPerShard)}{' '}
-            per machine ({bytes(expand.totalBytes)} total state). Expand transport is planned but not
-            connected yet.
+            largest power-of-two group: a maximum envelope of {expand.maxQubits} qubits with{' '}
+            {bytes(expand.bytesPerShard)} per machine ({bytes(expand.totalBytes)} total state).
+            Smaller shards trade some capacity for more parallel workers. Expand transport is planned
+            but not connected yet.
           </p>
         </details>
         {session.error && <p className="error">{session.error}</p>}

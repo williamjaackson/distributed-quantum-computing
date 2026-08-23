@@ -58,9 +58,13 @@ class FakeSignaling extends Emitter {
     this.room = null;
   }
   async connect() {}
-  createRoom() {
+  createRoom(requestedRoom) {
     this.peerId = `peer-${String(++this.hub.n).padStart(3, '0')}`;
-    this.room = `ROOM${this.hub.n}`;
+    this.room = requestedRoom || `ROOM${this.hub.n}`;
+    if (this.hub.rooms.has(this.room)) {
+      queueMicrotask(() => this.emit('server-error', { message: `room ${this.room} is already in use` }));
+      return;
+    }
     this.hub.rooms.set(this.room, new Map([[this.peerId, this]]));
     queueMicrotask(() => this.emit('room-created', { room: this.room, peerId: this.peerId }));
   }
@@ -132,6 +136,13 @@ test('sharing creates a room and a ?j= link', async () => {
   assert.equal(host.role, 'host');
   assert.ok(host.room);
   assert.ok(host.link.includes(`?j=${host.room}`));
+});
+
+test('a host can choose the room code', async () => {
+  const host = new Session(pair(makeHub()));
+  await host.share('my-lab');
+  assert.equal(host.room, 'MY-LAB');
+  assert.ok(host.link.endsWith('?j=MY-LAB'));
 });
 
 test('a viewer mirrors state, stage layout and playhead — including what predates its join', async () => {

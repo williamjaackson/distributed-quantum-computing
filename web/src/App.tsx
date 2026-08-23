@@ -451,6 +451,7 @@ export function App() {
             shots={viewer ? (run?.shots ?? shots) : shots}
             qubitCeiling={CEILING}
             maxShardQubits={limits?.maxShardQubits ?? null}
+            localLayout={timeline?.backend.description ?? null}
           />
 
           <RegisterPanel timeline={timeline} limits={limits} />
