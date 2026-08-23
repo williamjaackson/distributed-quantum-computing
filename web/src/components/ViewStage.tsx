@@ -32,6 +32,7 @@ import { Fragment, useCallback, useRef, useState } from 'react';
 import type { CSSProperties, DragEvent, KeyboardEvent, PointerEvent, ReactNode } from 'react';
 import { VIEWS, viewById } from '../views';
 import type { ViewDef } from '../views/types';
+import type { SharedStageLayout } from '../net/protocol';
 import { Info } from './Info';
 
 /**
@@ -90,6 +91,9 @@ interface Layout {
 
 export interface StageLayout {
   rows: Row[];
+  snapshot: SharedStageLayout;
+  /** Replace the arrangement with a host-supplied shared layout. */
+  follow: (layout: SharedStageLayout) => void;
   /** Collapse to a single pane showing `id`. */
   showOnly: (id: string) => void;
   /**
@@ -237,9 +241,39 @@ export function useStageLayout(initial: string): StageLayout {
       setState((s) => ({ rows: s.rows.map((x, i) => ({ ...x, h: heights[i] })) })),
     [],
   );
+  const follow = useCallback((incoming: SharedStageLayout) => {
+    const known = new Set(VIEWS.map((v) => v.id));
+    const used = new Set<string>();
+    const rows: Row[] = [];
+    for (const source of incoming.rows.slice(0, VIEWS.length)) {
+      const panes: Pane[] = [];
+      for (const pane of source.panes.slice(0, VIEWS.length)) {
+        if (!known.has(pane.id) || used.has(pane.id)) continue;
+        used.add(pane.id);
+        panes.push({
+          id: pane.id,
+          w: Number.isFinite(pane.w) && pane.w > 0 ? pane.w : 1,
+          z: SCALES.includes(pane.z) ? pane.z : 1,
+        });
+      }
+      if (panes.length > 0) {
+        rows.push(row(panes, Number.isFinite(source.h) && source.h > 0 ? source.h : 1));
+      }
+    }
+    if (rows.length > 0) setState({ rows });
+  }, []);
+
+  const snapshot: SharedStageLayout = {
+    rows: state.rows.map((r) => ({
+      h: r.h,
+      panes: r.panes.map(({ id, w, z }) => ({ id, w, z })),
+    })),
+  };
 
   return {
     rows: state.rows,
+    snapshot,
+    follow,
     showOnly,
     suggest,
     toggle,
@@ -314,12 +348,15 @@ function reweighted(weights: number[], i: number, shiftPx: number, extent: numbe
 export function ViewStage({
   layout,
   program,
+  readOnly = false,
   badge,
   children,
 }: {
   layout: StageLayout;
   /** For the suggested-view marker on the tabs. */
   program: { name: string; suggestedView?: string };
+  /** Locks view and layout controls while a viewer follows the host. */
+  readOnly?: boolean;
   /** One fact about the whole run, not about a projection of it. */
   badge?: ReactNode;
   /** Renders one pane's body. */
@@ -415,13 +452,14 @@ export function ViewStage({
               key={v.id}
               className={`tab${suggested ? ' tab-suggested' : ''}`}
               aria-pressed={shown}
-              draggable
+              disabled={readOnly}
+              draggable={!readOnly}
               onDragStart={(e) => startDrag(e, { kind: 'view', id: v.id })}
               onDragEnd={endDrag}
               onClick={(e) =>
                 e.shiftKey || e.metaKey || e.ctrlKey ? layout.toggle(v.id) : layout.showOnly(v.id)
               }
-              title={[
+              title={readOnly ? 'the host chooses the view' : [
                 suggested ? `${v.subtitle} — the best angle on ${program.name}` : v.subtitle,
                 shown && multi
                   ? 'shift-click to close it'
@@ -433,20 +471,21 @@ export function ViewStage({
           );
         })}
         {!multi && <span className="tabs-hint">drag a tab in to compare</span>}
-        {badge}
       </div>
 
-      <div
-        className="stage-split"
-        ref={split}
-        onDragOver={onDragOver}
-        onDragLeave={(e) => {
+      <div className="stage-wrap">
+        {badge && <div className="stage-badge-row">{badge}</div>}
+        <div
+          className="stage-split"
+          ref={split}
+          onDragOver={onDragOver}
+          onDragLeave={(e) => {
           // Only when the pointer has actually left the stage — moving between
           // two panes fires a leave for the one behind.
           if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setDrop(null);
         }}
-        onDrop={onDrop}
-      >
+          onDrop={onDrop}
+        >
         {rows.map((r, ri) => (
           <Fragment key={r.key}>
             {drop?.kind === 'row' && drop.at === ri && <div className="pane-drop-row" aria-hidden />}
@@ -483,7 +522,7 @@ export function ViewStage({
                     <section className="stage" data-pane={`${ri}.${ci}`} style={{ flex: pane.w }}>
                       <div
                         className="stage-head"
-                        draggable={multi}
+                        draggable={!readOnly && multi}
                         onDragStart={(e) => startDrag(e, { kind: 'pane', id: pane.id })}
                         onDragEnd={endDrag}
                       >
@@ -492,7 +531,7 @@ export function ViewStage({
                             the width: it is the sentence the ⓘ opens with. */}
                         {!multi && <p>{view.subtitle}</p>}
                         <Info about={`the ${view.name.toLowerCase()} view`}>{view.about}</Info>
-                        <span className="pane-zoom">
+                        {!readOnly && <span className="pane-zoom">
                           <button
                             type="button"
                             aria-label={`Draw the ${view.name} view smaller`}
@@ -523,8 +562,8 @@ export function ViewStage({
                           >
                             +
                           </button>
-                        </span>
-                        {multi && (
+                        </span>}
+                        {multi && !readOnly && (
                           <button
                             type="button"
                             className="pane-close"
@@ -560,6 +599,7 @@ export function ViewStage({
         {drop?.kind === 'row' && drop.at === rows.length && (
           <div className="pane-drop-row" aria-hidden />
         )}
+        </div>
       </div>
     </>
   );

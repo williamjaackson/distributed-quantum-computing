@@ -20,6 +20,7 @@
  */
 import type { Backend, EngineLimits } from './backend';
 import { createBackend, engineLimits, loadWasm, TOP_K } from './backend';
+import { countsFromFlat, evenSplit } from '../net/shots';
 import { GATE_PARAMS, gateArity, GATE_CONTROLS } from './steps';
 import type {
   Classical,
@@ -170,8 +171,48 @@ export interface RunOptions {
   measureAtEnd: boolean;
   /** Called as steps complete, so a long run can show progress. */
   onProgress?: (done: number) => void;
+  /** Called as shots complete, so a machine taking a share can show progress. */
+  onShot?: (done: number, of: number) => void;
   /** Checked between steps; a true return abandons the run. */
   cancelled?: () => boolean;
+  /**
+   * Skip the per-step frame snapshots.
+   *
+   * For runs whose only purpose is taking shots on another machine's behalf:
+   * nothing will ever scrub them, and at large registers the summaries cost
+   * more than the gates they summarise.
+   */
+  light?: boolean;
+  /** Override where the register's shards live (Expand mode). */
+  backendFactory?: (nQubits: number, seed: number) => Promise<Backend>;
+  /** Other machines willing to take a share of the shots. */
+  remote?: RemoteSampler;
+  /**
+   * Adopt these outcomes instead of taking shots.
+   *
+   * A viewer mirroring a shared session reproduces the host's circuit exactly
+   * (same seed, same deterministic engine) but cannot reproduce a histogram
+   * that several machines took together — so the host sends the merged result
+   * over and the run adopts it, keeping every panel and the best-shot readout
+   * identical on both ends.
+   */
+  preset?: {
+    outcomes: ShotOutcome[];
+    measurement: Measurement;
+    bestShot: Timeline['bestShot'];
+  };
+}
+
+/** Extra machines a run may spread its shots across. */
+export interface RemoteSampler {
+  /** How many remote machines can take a share right now. */
+  count(): number;
+  /**
+   * Ask machine `i` for `shots` shots drawn from `seed`; resolves to a flat
+   * `[index, count, ...]` histogram and how many shots were really taken. A
+   * rejection means the share was lost, and the caller re-takes it locally.
+   */
+  run(i: number, shots: number, seed: number): Promise<{ flat: ArrayLike<number>; taken: number }>;
 }
 
 /**
@@ -212,11 +253,14 @@ export async function runProgram(
     all: () => ({ ...bits }),
   };
 
+  // A run taken purely for its shots records no frames — nothing will scrub it.
+  const record = !options.light;
   let backend: Backend | null = null;
   const started = performance.now();
   try {
-    backend = await createBackend(nQubits, seedFor(seed, 0));
-    frames.push(await snapshot(backend, 0, bits, want));
+    backend = await (options.backendFactory?.(nQubits, seedFor(seed, 0)) ??
+      createBackend(nQubits, seedFor(seed, 0)));
+    if (record) frames.push(await snapshot(backend, 0, bits, want));
 
     if (!error) {
       for (const step of program.build(values, cl)) {
@@ -235,7 +279,7 @@ export async function runProgram(
           await backend.applyGate(step.name, step.qubits, step.params);
         }
         steps.push(step);
-        frames.push(await snapshot(backend, steps.length, bits, want));
+        if (record) frames.push(await snapshot(backend, steps.length, bits, want));
         onProgress?.(steps.length);
       }
     }
@@ -255,12 +299,19 @@ export async function runProgram(
   const collapses = steps.filter((s) => s.kind === 'measure').length;
   if (backend && !error) {
     try {
-      const result =
-        collapses === 0
-          ? await sampleOnce(backend, shots, seed)
-          : await repeatRun(backend, program, values, steps.length, nQubits, shots, seed, cancelled);
-      outcomes = result.outcomes;
-      measurement = result.measurement;
+      if (options.preset) {
+        outcomes = options.preset.outcomes;
+        measurement = options.preset.measurement;
+      } else {
+        // How one share of the shots is taken, whoever ends up taking it.
+        const take = (n: number, s: number): Promise<Ensemble> =>
+          collapses === 0
+            ? sampleOnce(backend!, n, s, options.onShot)
+            : repeatRun(backend!, program, values, circuitSteps, nQubits, n, s, cancelled, options.onShot);
+        const result = await takeShots(shots, seed, collapses === 0 ? 'sampled' : 'repeated', take, options.remote);
+        outcomes = result.outcomes;
+        measurement = result.measurement;
+      }
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
     }
@@ -268,9 +319,10 @@ export async function runProgram(
 
   // Rank the shots, if the program says what better means. The best one is
   // usually not the likeliest, which is the whole reason a sampling algorithm
-  // takes more than one.
-  let bestShot: Timeline['bestShot'] = null;
-  if (program.score) {
+  // takes more than one. A preset result was ranked where it was merged: the
+  // host saw shots this run never held, so its verdict stands unrecomputed.
+  let bestShot: Timeline['bestShot'] = options.preset?.bestShot ?? null;
+  if (!options.preset && program.score) {
     outcomes.forEach((o, rank) => {
       const score = program.score!(o.index, values);
       if (score === null || !Number.isFinite(score)) return;
@@ -332,7 +384,7 @@ export async function runProgram(
               ? `Look at qubit ${q} — it has to decide`
               : `Qubit ${q} came up ${outcome} in the best of the shots`,
         });
-        frames.push(await snapshot(backend, steps.length, bits, want));
+        if (record) frames.push(await snapshot(backend, steps.length, bits, want));
       }
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
@@ -434,6 +486,93 @@ function ranked(counts: Map<number, number>): ShotOutcome[] {
     .sort((a, b) => b.count - a.count || a.index - b.index);
 }
 
+/** A distinct seed per helping machine, so no two draw the same sample stream. */
+function helperSeed(seed: number, helper: number): number {
+  return (seed ^ Math.imul(helper + 1, 0x85ebca6b)) >>> 0;
+}
+
+/**
+ * Take the shots, spread across every machine willing to help.
+ *
+ * The host takes one share itself, concurrently with the helpers taking
+ * theirs, and merges the histograms — only the small circuit description goes
+ * out and only counts come back. A helper that disconnects or fails costs
+ * redone work, never shots: its exact share is re-taken here, and the host is
+ * always available to itself, so this always terminates.
+ */
+async function takeShots(
+  shots: number,
+  seed: number,
+  method: Measurement['method'],
+  take: (n: number, seed: number) => Promise<Ensemble>,
+  remote: RemoteSampler | undefined,
+): Promise<Ensemble> {
+  const helpers = remote?.count() ?? 0;
+  if (helpers === 0) return take(shots, seed);
+
+  const shares = evenSplit(shots, helpers + 1);
+  const pending = shares.slice(1).map((share, i) =>
+    share === 0
+      ? Promise.resolve({ counts: new Map<number, number>(), taken: 0 })
+      : remote!.run(i, share, helperSeed(seed, i)).then((r) => ({
+          counts: countsFromFlat(r.flat),
+          taken: r.taken,
+        })),
+  );
+  const local = shares[0] > 0 ? await take(shares[0], seed) : null;
+  const settled = await Promise.allSettled(pending);
+
+  let lost = 0;
+  settled.forEach((s, i) => {
+    if (s.status === 'rejected') lost += shares[i + 1];
+  });
+  const recovered = lost > 0 ? await take(lost, (seed ^ 0x9e3779b9) >>> 0) : null;
+
+  const counts = new Map<number, number>();
+  let taken = 0;
+  const add = (ensemble: Ensemble | null) => {
+    if (!ensemble) return;
+    for (const { index, count } of ensemble.outcomes) {
+      counts.set(index, (counts.get(index) ?? 0) + count);
+    }
+    taken += ensemble.measurement.taken;
+  };
+  add(local);
+  add(recovered);
+  let helped = 0;
+  for (const s of settled) {
+    if (s.status !== 'fulfilled') continue;
+    helped++;
+    for (const [index, count] of s.value.counts) {
+      counts.set(index, (counts.get(index) ?? 0) + count);
+    }
+    taken += s.value.taken;
+  }
+
+  const failed = settled.length - helped;
+  const parts: string[] = [];
+  if (helped > 0) parts.push(`taken by ${helped + 1} machines together`);
+  if (failed > 0) {
+    parts.push(`${failed} helper${failed === 1 ? '' : 's'} dropped out, so their share was re-taken here`);
+  }
+  // The budget note, when a share was cut short. Each machine budgets its own
+  // share, so this reports the honest merged total rather than one machine's
+  // phrasing.
+  if (taken < shots) {
+    parts.push(local?.measurement.note ?? `${taken.toLocaleString()} of ${shots.toLocaleString()} fit the budget`);
+  }
+
+  return {
+    outcomes: ranked(counts),
+    measurement: {
+      requested: shots,
+      taken,
+      method,
+      note: parts.length > 0 ? parts.join('; ') : undefined,
+    },
+  };
+}
+
 /**
  * Shots of a circuit that never measures.
  *
@@ -441,8 +580,14 @@ function ranked(counts: Map<number, number>): ShotOutcome[] {
  * them from it in one pass. Exact, and no more expensive for a million shots
  * than for one.
  */
-async function sampleOnce(backend: Backend, shots: number, seed: number): Promise<Ensemble> {
+async function sampleOnce(
+  backend: Backend,
+  shots: number,
+  seed: number,
+  onShot?: (done: number, of: number) => void,
+): Promise<Ensemble> {
   const counts = await backend.sample(shots, seedFor(seed, 0));
+  onShot?.(shots, shots);
   return {
     outcomes: ranked(counts),
     measurement: { requested: shots, taken: shots, method: 'sampled' },
@@ -466,6 +611,7 @@ async function repeatRun(
   shots: number,
   seed: number,
   cancelled?: () => boolean,
+  onShot?: (done: number, of: number) => void,
 ): Promise<Ensemble> {
   const perShot = Math.max(1, gates) * 2 ** nQubits;
   const affordable = Math.max(1, Math.floor(SHOT_BUDGET / perShot));
@@ -491,6 +637,7 @@ async function repeatRun(
     for (const [index, count] of await backend.sample(1, seedFor(seed, shot ^ 0x5f5e1))) {
       counts.set(index, (counts.get(index) ?? 0) + count);
     }
+    onShot?.(shot + 1, taken);
   }
 
   return {
