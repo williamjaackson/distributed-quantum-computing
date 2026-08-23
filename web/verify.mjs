@@ -11,16 +11,16 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-// Through the package name, not the path: the app's own modules import 'qsim',
+// Through the package name, not the path: the app's own modules import 'rock',
 // and two specifiers that reach the same file still have to be the same module
 // instance or only one of them ends up initialised.
-import { initSync, Simulator, gateNames, qaoaPlan } from 'qsim';
+import { initSync, Simulator, gateNames, qaoaPlan } from 'rock';
 import { PROGRAMS } from './src/programs/index.ts';
 import { defaultValues } from './src/lib/inputs.ts';
 import { GATE_CONTROLS, GATE_PARAMS, gateArity } from './src/lib/steps.ts';
 
 const here = dirname(fileURLToPath(import.meta.url));
-initSync({ module: readFileSync(join(here, '../engine/pkg/qsim_bg.wasm')) });
+initSync({ module: readFileSync(join(here, '../engine/pkg/rock_bg.wasm')) });
 
 let failures = 0;
 const check = (name, ok, detail = '') => {

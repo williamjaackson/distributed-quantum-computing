@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use qsim::Simulator;
+use rock::Simulator;
 
 #[test]
 fn python_qaoa_cost_and_mixer_match() {

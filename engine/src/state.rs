@@ -16,7 +16,7 @@ use crate::complex::C;
 pub const MAX_QUBITS: u32 = if usize::BITS == 32 { 26 } else { 32 };
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum QsimError {
+pub enum RockError {
     /// Requested qubit count exceeds what this build can address.
     TooManyQubits { requested: u32, max: u32 },
     /// The allocator refused the request — this is the expected outcome at the
@@ -41,47 +41,47 @@ pub enum QsimError {
     ImpossibleOutcome { qubit: u32, outcome: u8 },
 }
 
-impl std::fmt::Display for QsimError {
+impl std::fmt::Display for RockError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            QsimError::TooManyQubits { requested, max } => write!(
+            RockError::TooManyQubits { requested, max } => write!(
                 f,
                 "{requested} qubits exceeds the maximum of {max} for this build"
             ),
-            QsimError::OutOfMemory { requested, bytes } => write!(
+            RockError::OutOfMemory { requested, bytes } => write!(
                 f,
                 "out of memory allocating {requested} qubits ({bytes} bytes)"
             ),
-            QsimError::InvalidQubit { qubit, n_qubits } => {
+            RockError::InvalidQubit { qubit, n_qubits } => {
                 write!(f, "qubit {qubit} out of range for a {n_qubits}-qubit state")
             }
-            QsimError::DuplicateQubit(q) => {
+            RockError::DuplicateQubit(q) => {
                 write!(f, "qubit {q} used more than once in the same gate")
             }
-            QsimError::WrongArity { gate, expected, got } => write!(
+            RockError::WrongArity { gate, expected, got } => write!(
                 f,
                 "gate {gate} expects {expected} qubit(s), got {got}"
             ),
-            QsimError::UnknownGate(g) => write!(f, "unknown gate '{g}'"),
-            QsimError::TooLargeForOperation { n_qubits, limit } => write!(
+            RockError::UnknownGate(g) => write!(f, "unknown gate '{g}'"),
+            RockError::TooLargeForOperation { n_qubits, limit } => write!(
                 f,
                 "operation needs a full-size buffer; {n_qubits} qubits exceeds the limit of {limit}"
             ),
-            QsimError::MissingParams { gate, expected, got } => write!(
+            RockError::MissingParams { gate, expected, got } => write!(
                 f,
                 "gate {gate} expects {expected} parameter(s), got {got}"
             ),
-            QsimError::InvalidShard { index, shards } => {
+            RockError::InvalidShard { index, shards } => {
                 write!(f, "shard {index} out of range for {shards} shard(s)")
             }
-            QsimError::BlockOutOfRange { block, blocks } => {
+            RockError::BlockOutOfRange { block, blocks } => {
                 write!(f, "exchange block {block} out of range ({blocks} blocks)")
             }
-            QsimError::ImpossibleOutcome { qubit, outcome } => write!(
+            RockError::ImpossibleOutcome { qubit, outcome } => write!(
                 f,
                 "qubit {qubit} cannot be {outcome}: that branch holds no probability"
             ),
-            QsimError::NotPairable(g) => write!(
+            RockError::NotPairable(g) => write!(
                 f,
                 "gate {g} cannot run as a shard pairing; decompose it first"
             ),
@@ -119,9 +119,9 @@ impl StateVector {
     /// Uses `try_reserve_exact` so an oversized request returns `Err` instead of
     /// aborting the process — essential in WASM, where a panic poisons the whole
     /// module instance and would kill the benchmark mid-probe.
-    pub fn try_new(n_qubits: u32) -> Result<Self, QsimError> {
+    pub fn try_new(n_qubits: u32) -> Result<Self, RockError> {
         if n_qubits > MAX_QUBITS {
-            return Err(QsimError::TooManyQubits {
+            return Err(RockError::TooManyQubits {
                 requested: n_qubits,
                 max: MAX_QUBITS,
             });
@@ -129,7 +129,7 @@ impl StateVector {
         let len = 1usize << n_qubits;
         let mut amps: Vec<C> = Vec::new();
         amps.try_reserve_exact(len)
-            .map_err(|_| QsimError::OutOfMemory {
+            .map_err(|_| RockError::OutOfMemory {
                 requested: n_qubits,
                 bytes: memory_bytes_required(n_qubits),
             })?;
@@ -175,9 +175,9 @@ impl StateVector {
         self.amps.iter().map(|a| a.norm_sqr()).sum()
     }
 
-    pub(crate) fn check_qubit(&self, q: u32) -> Result<(), QsimError> {
+    pub(crate) fn check_qubit(&self, q: u32) -> Result<(), RockError> {
         if q >= self.n_qubits {
-            Err(QsimError::InvalidQubit {
+            Err(RockError::InvalidQubit {
                 qubit: q,
                 n_qubits: self.n_qubits,
             })
@@ -187,11 +187,11 @@ impl StateVector {
     }
 
     /// Validate that every qubit is in range and no qubit repeats.
-    pub(crate) fn check_distinct(&self, qubits: &[u32]) -> Result<(), QsimError> {
+    pub(crate) fn check_distinct(&self, qubits: &[u32]) -> Result<(), RockError> {
         for (i, &q) in qubits.iter().enumerate() {
             self.check_qubit(q)?;
             if qubits[..i].contains(&q) {
-                return Err(QsimError::DuplicateQubit(q));
+                return Err(RockError::DuplicateQubit(q));
             }
         }
         Ok(())

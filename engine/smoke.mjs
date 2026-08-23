@@ -6,10 +6,10 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { initSync, Simulator, maxQubits, canAllocate, memoryBytesRequired, engineVersion, fullArrayQubitLimit } from './pkg/qsim.js';
+import { initSync, Simulator, maxQubits, canAllocate, memoryBytesRequired, engineVersion, fullArrayQubitLimit } from './pkg/rock.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
-initSync({ module: readFileSync(join(here, 'pkg/qsim_bg.wasm')) });
+initSync({ module: readFileSync(join(here, 'pkg/rock_bg.wasm')) });
 
 const gib = (b) => (b / 1024 ** 3).toFixed(2) + ' GiB';
 let failures = 0;
@@ -18,7 +18,7 @@ const check = (name, ok, detail = '') => {
   if (!ok) failures++;
 };
 
-console.log(`qsim v${engineVersion()}  maxQubits=${maxQubits()}  fullArrayLimit=${fullArrayQubitLimit()}\n`);
+console.log(`rock v${engineVersion()}  maxQubits=${maxQubits()}  fullArrayLimit=${fullArrayQubitLimit()}\n`);
 
 // Bell state
 {

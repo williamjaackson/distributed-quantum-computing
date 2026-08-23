@@ -8,13 +8,13 @@
 //!   2. Algorithm-level checks — Bell, GHZ, QFT, Grover and teleportation, whose
 //!      expected outputs come from the physics rather than from this codebase.
 
-use qsim::circuits;
-use qsim::complex::{Mat2, C};
-use qsim::gates::{apply, apply_controlled, apply_swap, Gate};
-use qsim::measure;
-use qsim::rng::Rng;
-use qsim::state::{QsimError, StateVector, MAX_QUBITS};
-use qsim::Simulator;
+use rock::circuits;
+use rock::complex::{Mat2, C};
+use rock::gates::{apply, apply_controlled, apply_swap, Gate};
+use rock::measure;
+use rock::rng::Rng;
+use rock::state::{RockError, StateVector, MAX_QUBITS};
+use rock::Simulator;
 
 const TOL: f64 = 1e-12;
 
@@ -512,11 +512,11 @@ fn expectation_z_matches_probabilities() {
 
 #[test]
 fn memory_requirement_matches_the_16_bytes_per_amplitude_model() {
-    assert_eq!(qsim::state::memory_bytes_required(0), 16);
-    assert_eq!(qsim::state::memory_bytes_required(10), 16 * 1024);
-    assert_eq!(qsim::state::memory_bytes_required(20), 16 * 1024 * 1024);
+    assert_eq!(rock::state::memory_bytes_required(0), 16);
+    assert_eq!(rock::state::memory_bytes_required(10), 16 * 1024);
+    assert_eq!(rock::state::memory_bytes_required(20), 16 * 1024 * 1024);
     // 27 qubits is 2 GiB — the practical wasm32 ceiling.
-    assert_eq!(qsim::state::memory_bytes_required(27), 2 * 1024 * 1024 * 1024);
+    assert_eq!(rock::state::memory_bytes_required(27), 2 * 1024 * 1024 * 1024);
 }
 
 /// `isize::MAX` on a 32-bit target — the largest single allocation Rust permits.
@@ -528,19 +528,19 @@ fn max_qubits_is_set_by_the_single_allocation_limit_not_the_address_space() {
     // wasm32 is isize::MAX, not the 4 GiB address space: 27 qubits needs exactly
     // 2^31 bytes, one byte too many, and is refused instantly without the heap
     // even growing. 26 qubits (1 GiB) is the largest single Vec that fits.
-    assert!(qsim::state::memory_bytes_required(26) <= WASM32_ISIZE_MAX);
-    assert!(qsim::state::memory_bytes_required(27) > WASM32_ISIZE_MAX);
-    assert_eq!(qsim::state::memory_bytes_required(27), 1 << 31);
+    assert!(rock::state::memory_bytes_required(26) <= WASM32_ISIZE_MAX);
+    assert!(rock::state::memory_bytes_required(27) > WASM32_ISIZE_MAX);
+    assert_eq!(rock::state::memory_bytes_required(27), 1 << 31);
     // The cap is per allocation, not on the total: sharding is what gets past it.
-    assert_eq!(qsim::shard::plan(29, 26, 0).shards, 8);
-    assert!(qsim::shard::plan(29, 26, 0).bytes_per_shard <= WASM32_ISIZE_MAX);
+    assert_eq!(rock::shard::plan(29, 26, 0).shards, 8);
+    assert!(rock::shard::plan(29, 26, 0).bytes_per_shard <= WASM32_ISIZE_MAX);
 }
 
 #[test]
 fn oversized_allocation_errors_rather_than_panicking() {
     let err = StateVector::try_new(MAX_QUBITS + 1).unwrap_err();
     assert!(
-        matches!(err, QsimError::TooManyQubits { .. }),
+        matches!(err, RockError::TooManyQubits { .. }),
         "expected TooManyQubits, got {err:?}"
     );
 }
@@ -552,7 +552,7 @@ fn full_state_arrays_are_refused_past_the_limit() {
     if let Ok(sv) = StateVector::try_new(n) {
         let err = measure::probabilities(&sv).unwrap_err();
         assert!(
-            matches!(err, QsimError::TooLargeForOperation { .. }),
+            matches!(err, RockError::TooLargeForOperation { .. }),
             "expected TooLargeForOperation, got {err:?}"
         );
         // The streaming marginal still works at this size.
@@ -565,27 +565,27 @@ fn invalid_gate_requests_are_rejected() {
     let mut sim = Simulator::new(3).unwrap();
     assert!(matches!(
         sim.apply_named("h", &[9], &[]),
-        Err(QsimError::InvalidQubit { .. })
+        Err(RockError::InvalidQubit { .. })
     ));
     assert!(matches!(
         sim.apply_named("cx", &[1, 1], &[]),
-        Err(QsimError::DuplicateQubit(1))
+        Err(RockError::DuplicateQubit(1))
     ));
     assert!(matches!(
         sim.apply_named("cx", &[0], &[]),
-        Err(QsimError::WrongArity { .. })
+        Err(RockError::WrongArity { .. })
     ));
     assert!(matches!(
         sim.apply_named("nope", &[0], &[]),
-        Err(QsimError::UnknownGate(_))
+        Err(RockError::UnknownGate(_))
     ));
     assert!(matches!(
         sim.apply_named("rx", &[0], &[]),
-        Err(QsimError::MissingParams { .. })
+        Err(RockError::MissingParams { .. })
     ));
     assert!(matches!(
         sim.apply_named("swap", &[0], &[]),
-        Err(QsimError::WrongArity { .. })
+        Err(RockError::WrongArity { .. })
     ));
     // A rejected gate must leave the state untouched.
     assert_close(sim.norm(), 1.0, "norm after rejected gates");
@@ -596,7 +596,7 @@ fn invalid_gate_requests_are_rejected() {
 fn every_advertised_gate_name_is_applicable() {
     // Keeps GATE_NAMES honest, so a UI palette built from it cannot offer a
     // gate the dispatcher rejects.
-    for name in qsim::GATE_NAMES {
+    for name in rock::GATE_NAMES {
         let mut sim = Simulator::new(3).unwrap();
         let params = [0.3, 0.4, 0.5];
         // Try each arity until one is accepted.
@@ -629,7 +629,7 @@ fn benchmark_workload_is_unitary_and_reports_its_gate_count() {
         let gates = sim.bench_layers(3);
         assert_eq!(
             gates as u64,
-            qsim::bench::gates_per_layer(n) * 3,
+            rock::bench::gates_per_layer(n) * 3,
             "gate count for n={n}"
         );
         assert_close(sim.norm(), 1.0, &format!("norm after benchmark n={n}"));
@@ -668,7 +668,7 @@ fn bloch_vector_matches_naive_reference() {
         let amps = random_state(n, 0xB10C + n as u64);
         let sv = state_from(n, &amps);
         for q in 0..n {
-            let got = qsim::measure::bloch_vector(&sv, q).unwrap();
+            let got = rock::measure::bloch_vector(&sv, q).unwrap();
             let want = naive_bloch(&amps, q);
             for (axis, (g, w)) in got.iter().zip(want.iter()).enumerate() {
                 assert_close(*g, *w, &format!("bloch axis {axis} of qubit {q}, n={n}"));
@@ -739,7 +739,7 @@ fn top_amplitudes_matches_a_full_sort() {
         all.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap().then(a.0.cmp(&b.0)));
 
         for k in [1usize, 3, 8, 1 << n, (1 << n) + 5] {
-            let got = qsim::measure::top_amplitudes(&sv, k);
+            let got = rock::measure::top_amplitudes(&sv, k);
             let want = k.min(1 << n);
             assert_eq!(got.len(), want, "top_amplitudes({k}) length for n={n}");
             // Compare probabilities rather than indices: equal probabilities may
@@ -774,7 +774,7 @@ fn top_amplitudes_skips_states_with_no_amplitude() {
     let mut indices: Vec<u64> = top.iter().map(|(i, _)| *i).collect();
     indices.sort_unstable();
     assert_eq!(indices, vec![0, 31], "GHZ occupies |00000> and |11111>");
-    assert!(qsim::measure::top_amplitudes(&StateVector::try_new(3).unwrap(), 0).is_empty());
+    assert!(rock::measure::top_amplitudes(&StateVector::try_new(3).unwrap(), 0).is_empty());
 }
 
 #[test]
@@ -815,10 +815,10 @@ fn reduced_two_matches_naive_reference() {
         for a in 0..n {
             for b in 0..n {
                 if a == b {
-                    assert!(qsim::measure::reduced_two(&sv, a, b).is_err(), "a == b");
+                    assert!(rock::measure::reduced_two(&sv, a, b).is_err(), "a == b");
                     continue;
                 }
-                let got = qsim::measure::reduced_two(&sv, a, b).unwrap();
+                let got = rock::measure::reduced_two(&sv, a, b).unwrap();
                 let want = naive_reduced_two(&amps, a, b);
                 for (idx, (g, w)) in got.iter().zip(want.iter()).enumerate() {
                     assert_close(*g, *w, &format!("rho[{idx}] for ({a},{b}), n={n}"));
@@ -839,14 +839,14 @@ fn reduced_two_has_the_marginals_on_its_diagonal() {
             if a == b {
                 continue;
             }
-            let rho = qsim::measure::reduced_two(&sv, a, b).unwrap();
+            let rho = rock::measure::reduced_two(&sv, a, b).unwrap();
             let diag = |k: usize| rho[2 * (k * 4 + k)];
             // Summing over qubit b's value leaves qubit a's marginal.
             let a1 = diag(1) + diag(3);
-            let [_, _, _, want_a] = qsim::measure::reduced_one(&sv, a).unwrap();
+            let [_, _, _, want_a] = rock::measure::reduced_one(&sv, a).unwrap();
             assert_close(a1, want_a, &format!("P({a}=1) from the pair ({a},{b})"));
             let b1 = diag(2) + diag(3);
-            let [_, _, _, want_b] = qsim::measure::reduced_one(&sv, b).unwrap();
+            let [_, _, _, want_b] = rock::measure::reduced_one(&sv, b).unwrap();
             assert_close(b1, want_b, &format!("P({b}=1) from the pair ({a},{b})"));
             assert_close(
                 diag(0) + diag(1) + diag(2) + diag(3),
@@ -893,7 +893,7 @@ fn multi_controlled_matches_naive_reference() {
             let target = qubits[controls as usize];
             for (name, gate) in [("mcx", Gate::X), ("mcz", Gate::Z)] {
                 let mut sv = state_from(n, &amps);
-                qsim::dispatch::apply_named(&mut sv, name, &qubits, &[]).unwrap();
+                rock::dispatch::apply_named(&mut sv, name, &qubits, &[]).unwrap();
                 let want = naive_controlled(&amps, gate.matrix(), ctrl, target);
                 assert_states_close(
                     sv.amps(),
@@ -918,8 +918,8 @@ fn multi_controlled_agrees_with_the_fixed_arity_names() {
     ] {
         let mut a = state_from(4, &amps);
         let mut b = state_from(4, &amps);
-        qsim::dispatch::apply_named(&mut a, variadic, &qubits, &[]).unwrap();
-        qsim::dispatch::apply_named(&mut b, fixed, &qubits, &[]).unwrap();
+        rock::dispatch::apply_named(&mut a, variadic, &qubits, &[]).unwrap();
+        rock::dispatch::apply_named(&mut b, fixed, &qubits, &[]).unwrap();
         assert_states_close(a.amps(), b.amps(), &format!("{variadic} vs {fixed}"));
     }
 }
@@ -1023,11 +1023,11 @@ fn collapse_matches_what_measure_does_to_the_state() {
             // Measure once to learn the outcome, then check collapsing another
             // copy onto that same outcome lands in the same place.
             let mut measured = state_from(n, &amps);
-            let mut rng = qsim::rng::Rng::new(0xABCD);
-            let outcome = qsim::measure::measure(&mut measured, q, &mut rng).unwrap();
+            let mut rng = rock::rng::Rng::new(0xABCD);
+            let outcome = rock::measure::measure(&mut measured, q, &mut rng).unwrap();
 
             let mut projected = state_from(n, &amps);
-            qsim::measure::collapse(&mut projected, q, outcome).unwrap();
+            rock::measure::collapse(&mut projected, q, outcome).unwrap();
             assert_states_close(
                 projected.amps(),
                 measured.amps(),
@@ -1077,7 +1077,7 @@ fn collapse_refuses_an_outcome_the_state_cannot_produce() {
     let mut sim = Simulator::new(2).unwrap();
     let err = sim.collapse(0, 1).unwrap_err();
     assert!(
-        matches!(err, qsim::state::QsimError::ImpossibleOutcome { qubit: 0, outcome: 1 }),
+        matches!(err, rock::state::RockError::ImpossibleOutcome { qubit: 0, outcome: 1 }),
         "expected ImpossibleOutcome, got {err:?}"
     );
     // And the state is untouched by the refusal.
@@ -1095,11 +1095,11 @@ fn reduced_two_over_a_slice_matches_the_state_vector_form() {
         for a in 0..n {
             for b in 0..n {
                 if a == b {
-                    assert!(qsim::measure::reduced_two_of(&amps, a, b).is_err(), "a == b");
+                    assert!(rock::measure::reduced_two_of(&amps, a, b).is_err(), "a == b");
                     continue;
                 }
-                let over_slice = qsim::measure::reduced_two_of(&amps, a, b).unwrap();
-                let over_state = qsim::measure::reduced_two(&sv, a, b).unwrap();
+                let over_slice = rock::measure::reduced_two_of(&amps, a, b).unwrap();
+                let over_state = rock::measure::reduced_two(&sv, a, b).unwrap();
                 for (i, (x, y)) in over_slice.iter().zip(over_state.iter()).enumerate() {
                     assert_close(*x, *y, &format!("rho[{i}] for ({a},{b}), n={n}"));
                 }
@@ -1107,5 +1107,5 @@ fn reduced_two_over_a_slice_matches_the_state_vector_form() {
         }
     }
     let amps = random_state(3, 7);
-    assert!(qsim::measure::reduced_two_of(&amps, 0, 3).is_err(), "qubit out of range");
+    assert!(rock::measure::reduced_two_of(&amps, 0, 3).is_err(), "qubit out of range");
 }

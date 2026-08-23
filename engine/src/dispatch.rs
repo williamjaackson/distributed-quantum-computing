@@ -6,7 +6,7 @@
 
 use crate::complex::Mat2;
 use crate::gates::{self, Gate};
-use crate::state::{QsimError, StateVector};
+use crate::state::{RockError, StateVector};
 
 /// Control count for a gate whose arity comes from the *call* rather than from
 /// its name — every qubit but the last is a control.
@@ -24,18 +24,18 @@ pub enum Op {
     Swap,
 }
 
-fn param(params: &[f64], i: usize, name: &str, needed: usize) -> Result<f64, QsimError> {
+fn param(params: &[f64], i: usize, name: &str, needed: usize) -> Result<f64, RockError> {
     params
         .get(i)
         .copied()
-        .ok_or_else(|| QsimError::MissingParams {
+        .ok_or_else(|| RockError::MissingParams {
             gate: name.to_string(),
             expected: needed,
             got: params.len(),
         })
 }
 
-pub fn parse_op(name: &str, params: &[f64]) -> Result<Op, QsimError> {
+pub fn parse_op(name: &str, params: &[f64]) -> Result<Op, RockError> {
     let lower = name.to_ascii_lowercase();
     let n = lower.as_str();
 
@@ -99,7 +99,7 @@ pub fn parse_op(name: &str, params: &[f64]) -> Result<Op, QsimError> {
         "ccx" | "toffoli" => Ok(Op::Unitary { gate: Gate::X, controls: 2 }),
         "ccz" => Ok(Op::Unitary { gate: Gate::Z, controls: 2 }),
         "swap" => Ok(Op::Swap),
-        _ => Err(QsimError::UnknownGate(name.to_string())),
+        _ => Err(RockError::UnknownGate(name.to_string())),
     }
 }
 
@@ -129,14 +129,14 @@ impl Op {
         }
     }
 
-    pub fn check_arity(self, name: &str, got: usize) -> Result<(), QsimError> {
+    pub fn check_arity(self, name: &str, got: usize) -> Result<(), RockError> {
         match self.arity() {
             Some(expected) if got == expected => Ok(()),
-            Some(expected) => Err(QsimError::WrongArity { gate: name.to_string(), expected, got }),
+            Some(expected) => Err(RockError::WrongArity { gate: name.to_string(), expected, got }),
             // Variadic: at least one control and a target. A "multi-controlled"
             // gate with no controls is a plain gate and the caller should say so.
             None if got >= 2 => Ok(()),
-            None => Err(QsimError::WrongArity { gate: name.to_string(), expected: 2, got }),
+            None => Err(RockError::WrongArity { gate: name.to_string(), expected: 2, got }),
         }
     }
 }
@@ -148,7 +148,7 @@ pub fn apply_named(
     name: &str,
     qubits: &[u32],
     params: &[f64],
-) -> Result<(), QsimError> {
+) -> Result<(), RockError> {
     let op = parse_op(name, params)?;
     op.check_arity(name, qubits.len())?;
     match op {
@@ -213,9 +213,9 @@ pub fn apply_base(
     params: &[f64],
     controls: &[u32],
     target: u32,
-) -> Result<(), QsimError> {
+) -> Result<(), RockError> {
     match parse_op(base, params)? {
-        Op::Swap => Err(QsimError::NotPairable(base.to_string())),
+        Op::Swap => Err(RockError::NotPairable(base.to_string())),
         Op::Unitary { gate, .. } => gates::apply_controlled(sv, gate, controls, target),
     }
 }

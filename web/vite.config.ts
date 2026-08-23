@@ -3,8 +3,8 @@ import react from '@vitejs/plugin-react';
 
 export default defineConfig({
   plugins: [react()],
-  // `qsim` is a wasm-pack output linked with `file:`. Excluding it from dep
-  // pre-bundling keeps the generated `new URL('qsim_bg.wasm', import.meta.url)`
+  // `rock` is a wasm-pack output linked with `file:`. Excluding it from dep
+  // pre-bundling keeps the generated `new URL('rock_bg.wasm', import.meta.url)`
   // pointing at the real file instead of an esbuild-rewritten copy.
-  optimizeDeps: { exclude: ['qsim'] },
+  optimizeDeps: { exclude: ['rock'] },
 });

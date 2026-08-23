@@ -10,12 +10,12 @@
 //! `ShardedSim` below is also the reference the TypeScript orchestrator follows,
 //! so the tricky logic is exercised here rather than in the browser.
 
-use qsim::complex::C;
-use qsim::dispatch::BASE_GATES;
-use qsim::rng::Rng;
-use qsim::shard::{encode_plan, plan_gate, Shard, Step, StepKind};
-use qsim::state::QsimError;
-use qsim::Simulator;
+use rock::complex::C;
+use rock::dispatch::BASE_GATES;
+use rock::rng::Rng;
+use rock::shard::{encode_plan, plan_gate, Shard, Step, StepKind};
+use rock::state::RockError;
+use rock::Simulator;
 
 const TOL: f64 = 1e-13;
 
@@ -31,7 +31,7 @@ struct ShardedSim {
 }
 
 impl ShardedSim {
-    fn new(global_qubits: u32, shard_bits: u32) -> Result<Self, QsimError> {
+    fn new(global_qubits: u32, shard_bits: u32) -> Result<Self, RockError> {
         let local_qubits = global_qubits - shard_bits;
         let shards = (0..(1u32 << shard_bits))
             .map(|i| Shard::try_new(local_qubits, shard_bits, i))
@@ -43,7 +43,7 @@ impl ShardedSim {
         1u32 << self.shard_bits
     }
 
-    fn apply(&mut self, name: &str, qubits: &[u32], params: &[f64]) -> Result<(), QsimError> {
+    fn apply(&mut self, name: &str, qubits: &[u32], params: &[f64]) -> Result<(), RockError> {
         let steps = plan_gate(name, qubits, params, self.local_qubits, self.shard_bits)?;
         for step in &steps {
             self.run_step(step)?;
@@ -51,7 +51,7 @@ impl ShardedSim {
         Ok(())
     }
 
-    fn run_step(&mut self, step: &Step) -> Result<(), QsimError> {
+    fn run_step(&mut self, step: &Step) -> Result<(), RockError> {
         match &step.kind {
             StepKind::Local { qubits } => {
                 let (controls, target) = qubits.split_at(qubits.len() - 1);
@@ -80,7 +80,7 @@ impl ShardedSim {
         low: u32,
         high: u32,
         local_cmask: usize,
-    ) -> Result<(), QsimError> {
+    ) -> Result<(), RockError> {
         let blocks = self.shards[low as usize].num_blocks();
         let block_amps = self.shards[low as usize].block_amps();
         let slice_len = self.shards[low as usize].len();
@@ -126,7 +126,7 @@ impl ShardedSim {
     /// the shard masses — no arithmetic over amplitudes whatsoever — while only
     /// the off-diagonal needs a pass, and it reuses the gate exchange's own
     /// staging buffer to get it.
-    fn reduced_one(&mut self, qubit: u32) -> Result<[f64; 4], QsimError> {
+    fn reduced_one(&mut self, qubit: u32) -> Result<[f64; 4], RockError> {
         if qubit < self.local_qubits {
             let mut acc = [0.0; 4];
             for s in &self.shards {
@@ -176,7 +176,7 @@ impl ShardedSim {
         Ok([r00, re01, im01, r11])
     }
 
-    fn bloch(&mut self, qubit: u32) -> Result<[f64; 3], QsimError> {
+    fn bloch(&mut self, qubit: u32) -> Result<[f64; 3], RockError> {
         let [r00, re01, im01, r11] = self.reduced_one(qubit)?;
         Ok([2.0 * re01, -2.0 * im01, r00 - r11])
     }
@@ -206,7 +206,7 @@ impl ShardedSim {
 
     /// Measure one qubit and collapse, drawing the outcome exactly once against
     /// the *global* marginal — the part a shard cannot do for itself.
-    fn measure(&mut self, qubit: u32, rng: &mut Rng) -> Result<u8, QsimError> {
+    fn measure(&mut self, qubit: u32, rng: &mut Rng) -> Result<u8, RockError> {
         let [_, _, _, r11] = self.reduced_one(qubit)?;
         let outcome: u8 = if rng.next_f64() < r11 { 1 } else { 0 };
         let p = if outcome == 1 { r11 } else { 1.0 - r11 };
@@ -481,19 +481,19 @@ fn single_shard_layout_is_all_local() {
 fn plan_rejects_invalid_requests() {
     assert!(matches!(
         plan_gate("h", &[9], &[], 2, 2),
-        Err(QsimError::InvalidQubit { .. })
+        Err(RockError::InvalidQubit { .. })
     ));
     assert!(matches!(
         plan_gate("cx", &[1, 1], &[], 2, 2),
-        Err(QsimError::DuplicateQubit(1))
+        Err(RockError::DuplicateQubit(1))
     ));
     assert!(matches!(
         plan_gate("cx", &[1], &[], 2, 2),
-        Err(QsimError::WrongArity { .. })
+        Err(RockError::WrongArity { .. })
     ));
     assert!(matches!(
         plan_gate("nope", &[1], &[], 2, 2),
-        Err(QsimError::UnknownGate(_))
+        Err(RockError::UnknownGate(_))
     ));
 }
 
@@ -549,17 +549,17 @@ fn blocked_exchange_is_independent_of_block_count() {
 fn shard_plan_keeps_slices_under_the_allocation_limit() {
     // 26 local qubits is 1 GiB, comfortably under the 2 GiB isize::MAX cap.
     for n in 20..=30u32 {
-        let p = qsim::shard::plan(n, 26, 0);
+        let p = rock::shard::plan(n, 26, 0);
         assert!(
             p.bytes_per_shard <= 1024 * 1024 * 1024,
             "{n} qubits: slice of {} bytes exceeds 1 GiB",
             p.bytes_per_shard
         );
         assert_eq!(p.local_qubits + p.shard_bits, n);
-        assert_eq!(p.total_bytes, qsim::state::memory_bytes_required(n));
+        assert_eq!(p.total_bytes, rock::state::memory_bytes_required(n));
     }
     // A parallelism hint adds shards even when one slice would already fit.
-    let p = qsim::shard::plan(20, 26, 3);
+    let p = rock::shard::plan(20, 26, 3);
     assert_eq!(p.shard_bits, 3);
     assert_eq!(p.local_qubits, 17);
 }
@@ -586,13 +586,13 @@ fn shard_masses_partition_the_total_probability() {
     assert!(masses[1].abs() < 1e-15 && masses[2].abs() < 1e-15, "middle shards carry mass");
 
     // Sampling within a slice must respect its own weights, not assume unit mass.
-    let drawn = qsim::measure::sample_unnormalised(sim.shards[0].amps(), 500, 7);
+    let drawn = rock::measure::sample_unnormalised(sim.shards[0].amps(), 500, 7);
     let shots: u32 = drawn.iter().map(|(_, c)| *c).sum();
     assert_eq!(shots, 500, "slice sampling lost shots");
     assert!(drawn.iter().all(|(i, _)| *i == 0), "slice 0 only supports local index 0");
 
     // A zero-mass slice must yield nothing rather than dividing by zero.
-    assert!(qsim::measure::sample_unnormalised(sim.shards[1].amps(), 500, 7).is_empty());
+    assert!(rock::measure::sample_unnormalised(sim.shards[1].amps(), 500, 7).is_empty());
 }
 
 // -- capacity validation ---------------------------------------------------
@@ -704,8 +704,8 @@ fn a_filled_sharded_state_still_matches_whole_state_execution() {
 
 /// A circuit that entangles across the whole register, so no qubit is left in a
 /// state of its own and every summary is non-trivial.
-fn spread(sim: &mut Simulator, sharded: &mut ShardedSim, n: u32) -> Result<(), QsimError> {
-    let mut apply = |name: &str, qubits: &[u32], params: &[f64]| -> Result<(), QsimError> {
+fn spread(sim: &mut Simulator, sharded: &mut ShardedSim, n: u32) -> Result<(), RockError> {
+    let mut apply = |name: &str, qubits: &[u32], params: &[f64]| -> Result<(), RockError> {
         sim.apply_named(name, qubits, params)?;
         sharded.apply(name, qubits, params)
     };

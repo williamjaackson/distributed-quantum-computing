@@ -239,7 +239,7 @@ export function App() {
     <div className="app">
       <header className="topbar">
         <div className="brand">
-          qsim<span>quantum circuit visualiser</span>
+          ROCK<span>quantum circuit visualiser</span>
         </div>
         <div className="chips">
           {timeline && (

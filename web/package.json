@@ -1,5 +1,5 @@
 {
-  "name": "qsim-visualiser",
+  "name": "rock",
   "private": true,
   "type": "module",
   "scripts": {
@@ -10,7 +10,7 @@
     "verify": "node --import ./tsresolve.mjs ./verify.mjs"
   },
   "dependencies": {
-    "qsim": "file:../engine/pkg",
+    "rock": "file:../engine/pkg",
     "react": "^19.2.0",
     "react-dom": "^19.2.0"
   },
