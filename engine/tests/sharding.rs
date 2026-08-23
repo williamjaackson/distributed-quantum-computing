@@ -116,6 +116,125 @@ impl ShardedSim {
     fn norm(&self) -> f64 {
         self.shards.iter().map(|s| s.probability_mass()).sum()
     }
+
+    /// One-qubit reduced density matrix as `[r00, re01, im01, r11]`.
+    ///
+    /// The two qubit kinds are answered in completely different ways, which is
+    /// the whole point of the split. A local qubit's elements are sums *within*
+    /// each slice, so the shards need no contact at all. A global qubit's two
+    /// branches live in *different* slices, so the diagonal comes straight from
+    /// the shard masses — no arithmetic over amplitudes whatsoever — while only
+    /// the off-diagonal needs a pass, and it reuses the gate exchange's own
+    /// staging buffer to get it.
+    fn reduced_one(&mut self, qubit: u32) -> Result<[f64; 4], QsimError> {
+        if qubit < self.local_qubits {
+            let mut acc = [0.0; 4];
+            for s in &self.shards {
+                let part = s.local_reduced_one(qubit)?;
+                for (a, p) in acc.iter_mut().zip(part.iter()) {
+                    *a += p;
+                }
+            }
+            return Ok(acc);
+        }
+
+        let bit = 1u32 << (qubit - self.local_qubits);
+        let mut r00 = 0.0;
+        let mut r11 = 0.0;
+        for (w, s) in self.shards.iter().enumerate() {
+            let mass = s.probability_mass();
+            if w as u32 & bit == 0 {
+                r00 += mass;
+            } else {
+                r11 += mass;
+            }
+        }
+
+        let mut re01 = 0.0;
+        let mut im01 = 0.0;
+        for low in 0..self.n_shards() {
+            if low & bit != 0 {
+                continue;
+            }
+            let high = low | bit;
+            let blocks = self.shards[low as usize].num_blocks();
+            let block_amps = self.shards[low as usize].block_amps();
+            let slice_len = self.shards[low as usize].len();
+            for b in 0..blocks {
+                let start = b * block_amps;
+                let n = (start + block_amps).min(slice_len) - start;
+                let (a, rest) = self.shards.split_at_mut(high as usize);
+                let lo = &mut a[low as usize];
+                let hi = &rest[0];
+                lo.scratch_mut()[..n].copy_from_slice(&hi.amps()[start..start + n]);
+                self.exchanges += 1;
+                let [re, im] = lo.dot_scratch(b)?;
+                re01 += re;
+                im01 += im;
+            }
+        }
+        Ok([r00, re01, im01, r11])
+    }
+
+    fn bloch(&mut self, qubit: u32) -> Result<[f64; 3], QsimError> {
+        let [r00, re01, im01, r11] = self.reduced_one(qubit)?;
+        Ok([2.0 * re01, -2.0 * im01, r00 - r11])
+    }
+
+    /// Global top-`k`, merged from each slice's own top-`k`.
+    ///
+    /// Exact, and not obviously so: a state can only be in the global top-`k`
+    /// if it is in its own shard's top-`k`, since ranking within a slice is the
+    /// same ranking as globally.
+    fn top_amplitudes(&self, k: usize) -> Vec<(u64, C)> {
+        let stride = 1u64 << self.local_qubits;
+        let mut merged: Vec<(u64, C)> = Vec::new();
+        for (w, s) in self.shards.iter().enumerate() {
+            for (i, a) in s.local_top_amplitudes(k) {
+                merged.push((w as u64 * stride + i, a));
+            }
+        }
+        merged.sort_by(|x, y| {
+            y.1.norm_sqr()
+                .partial_cmp(&x.1.norm_sqr())
+                .unwrap()
+                .then(x.0.cmp(&y.0))
+        });
+        merged.truncate(k);
+        merged
+    }
+
+    /// Measure one qubit and collapse, drawing the outcome exactly once against
+    /// the *global* marginal — the part a shard cannot do for itself.
+    fn measure(&mut self, qubit: u32, rng: &mut Rng) -> Result<u8, QsimError> {
+        let [_, _, _, r11] = self.reduced_one(qubit)?;
+        let outcome: u8 = if rng.next_f64() < r11 { 1 } else { 0 };
+        let p = if outcome == 1 { r11 } else { 1.0 - r11 };
+        if p <= 0.0 {
+            return Ok(outcome);
+        }
+        let scale = 1.0 / p.sqrt();
+
+        if qubit < self.local_qubits {
+            for s in &mut self.shards {
+                s.collapse_local(qubit, outcome, scale)?;
+            }
+        } else {
+            // A global qubit collapses by *shard selection*: the slices on the
+            // unobserved side hold nothing afterwards, and no slice is touched
+            // amplitude-by-amplitude except to rescale.
+            let bit = 1u32 << (qubit - self.local_qubits);
+            for (w, s) in self.shards.iter_mut().enumerate() {
+                let side: u8 = if w as u32 & bit != 0 { 1 } else { 0 };
+                if side == outcome {
+                    s.scale(scale);
+                } else {
+                    s.clear();
+                }
+            }
+        }
+        Ok(outcome)
+    }
 }
 
 fn assert_matches(sharded: &ShardedSim, whole: &Simulator, what: &str) {
@@ -158,6 +277,13 @@ fn gate_menu() -> Vec<(&'static str, usize, Vec<f64>)> {
         ("swap", 2, vec![]),
         ("ccx", 3, vec![]),
         ("ccz", 3, vec![]),
+        // Variadic names, at the arity the sweep happens to pass them.
+        ("mcx", 2, vec![]),
+        ("mcz", 2, vec![]),
+        ("mcx", 3, vec![]),
+        ("mcz", 3, vec![]),
+        ("mcx", 4, vec![]),
+        ("mcz", 4, vec![]),
     ]
 }
 
@@ -565,4 +691,146 @@ fn a_filled_sharded_state_still_matches_whole_state_execution() {
         }
         assert_matches(&sharded, &whole, &format!("filled state, shard_bits={shard_bits}"));
     }
+}
+
+// ---------------------------------------------------------------------------
+// Summaries and measurement, sharded
+//
+// A visualiser needs per-qubit summaries and mid-circuit measurement to work at
+// sharded sizes, where no caller can hold the whole state. Each one is checked
+// against `Simulator` on the same circuit, so the sharded answer has to be the
+// same answer — not merely a plausible one.
+// ---------------------------------------------------------------------------
+
+/// A circuit that entangles across the whole register, so no qubit is left in a
+/// state of its own and every summary is non-trivial.
+fn spread(sim: &mut Simulator, sharded: &mut ShardedSim, n: u32) -> Result<(), QsimError> {
+    let mut apply = |name: &str, qubits: &[u32], params: &[f64]| -> Result<(), QsimError> {
+        sim.apply_named(name, qubits, params)?;
+        sharded.apply(name, qubits, params)
+    };
+    for q in 0..n {
+        apply("ry", &[q], &[0.4 + 0.3 * q as f64])?;
+    }
+    for q in 0..n - 1 {
+        apply("cx", &[q, q + 1], &[])?;
+    }
+    for q in 0..n {
+        apply("p", &[q], &[0.2 * (q as f64 + 1.0)])?;
+    }
+    apply("h", &[0], &[])?;
+    Ok(())
+}
+
+#[test]
+fn bloch_vectors_match_whole_state_across_every_layout() {
+    let n = 4u32;
+    for shard_bits in 0..=n {
+        let mut whole = Simulator::new(n).unwrap();
+        let mut sharded = ShardedSim::new(n, shard_bits).unwrap();
+        spread(&mut whole, &mut sharded, n).unwrap();
+        assert_matches(&sharded, &whole, &format!("state before summaries, {shard_bits} bits"));
+
+        for q in 0..n {
+            let got = sharded.bloch(q).unwrap();
+            let want = whole.bloch_vector(q).unwrap();
+            for (axis, (g, w)) in got.iter().zip(want.iter()).enumerate() {
+                assert!(
+                    (g - w).abs() < TOL,
+                    "shard_bits={shard_bits} qubit {q} axis {axis}: sharded {g} vs whole {w}"
+                );
+            }
+        }
+        // The summary must not have disturbed anything, exchange buffer or not.
+        assert_matches(&sharded, &whole, &format!("state after summaries, {shard_bits} bits"));
+    }
+}
+
+#[test]
+fn top_amplitudes_match_whole_state_across_every_layout() {
+    let n = 4u32;
+    for shard_bits in 0..=n {
+        let mut whole = Simulator::new(n).unwrap();
+        let mut sharded = ShardedSim::new(n, shard_bits).unwrap();
+        spread(&mut whole, &mut sharded, n).unwrap();
+
+        for k in [1usize, 3, 16] {
+            let got = sharded.top_amplitudes(k);
+            let want = whole.top_amplitudes(k);
+            assert_eq!(got.len(), want.len(), "top {k} length, {shard_bits} bits");
+            for (rank, (g, w)) in got.iter().zip(want.iter()).enumerate() {
+                assert_eq!(g.0, w.0, "top {k} index at rank {rank}, {shard_bits} bits");
+                assert!(
+                    (g.1.re - w.1.re).abs() < TOL && (g.1.im - w.1.im).abs() < TOL,
+                    "top {k} amplitude at rank {rank}, {shard_bits} bits"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn measurement_matches_whole_state_across_every_layout() {
+    // The same seed drives both, and the marginals agree, so both must observe
+    // the same outcome and collapse onto the same state — including for a qubit
+    // that is global in one layout and local in another.
+    let n = 4u32;
+    for shard_bits in 0..=n {
+        for target in 0..n {
+            let mut whole = Simulator::new(n).unwrap();
+            let mut sharded = ShardedSim::new(n, shard_bits).unwrap();
+            spread(&mut whole, &mut sharded, n).unwrap();
+
+            whole.set_seed(0xC0FFEE);
+            let mut rng = Rng::new(0xC0FFEE);
+            let want = whole.measure(target).unwrap();
+            let got = sharded.measure(target, &mut rng).unwrap();
+
+            assert_eq!(got, want, "outcome for qubit {target}, {shard_bits} bits");
+            assert_matches(
+                &sharded,
+                &whole,
+                &format!("collapsed state, qubit {target}, {shard_bits} bits"),
+            );
+            assert!(
+                (sharded.norm() - 1.0).abs() < TOL,
+                "norm after collapse: {}",
+                sharded.norm()
+            );
+        }
+    }
+}
+
+#[test]
+fn measuring_a_global_qubit_empties_the_shards_it_rules_out() {
+    // 3 qubits split 1/2: qubit 2 is the shard-id bit, so measuring it must
+    // leave exactly one shard holding everything.
+    let mut sharded = ShardedSim::new(3, 1).unwrap();
+    sharded.apply("h", &[2], &[]).unwrap();
+    let mut rng = Rng::new(7);
+    let outcome = sharded.measure(2, &mut rng).unwrap();
+    let masses: Vec<f64> = sharded.shards.iter().map(|s| s.probability_mass()).collect();
+    let (kept, emptied) = if outcome == 1 { (1, 0) } else { (0, 1) };
+    assert!(
+        (masses[kept] - 1.0).abs() < TOL,
+        "surviving shard holds everything, got {}",
+        masses[kept]
+    );
+    assert!(masses[emptied] == 0.0, "ruled-out shard is empty, got {}", masses[emptied]);
+}
+
+#[test]
+fn a_local_summary_needs_no_communication() {
+    // Local qubits are the reason sharding is worth doing: their summaries are
+    // sums within a slice, so asking for one moves nothing between shards.
+    let mut sharded = ShardedSim::new(4, 2).unwrap();
+    sharded.apply("h", &[0], &[]).unwrap();
+    let before = sharded.exchanges;
+    for q in 0..sharded.local_qubits {
+        sharded.bloch(q).unwrap();
+    }
+    assert_eq!(sharded.exchanges, before, "local summaries caused traffic");
+    // A global qubit's off-diagonal genuinely cannot be answered locally.
+    sharded.bloch(sharded.local_qubits).unwrap();
+    assert!(sharded.exchanges > before, "global summary caused no traffic");
 }

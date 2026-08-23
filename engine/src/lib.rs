@@ -18,6 +18,7 @@ pub mod dispatch;
 pub mod gates;
 pub mod measure;
 pub mod qaoa;
+pub mod qaoa_plan;
 pub mod rng;
 pub mod shard;
 pub mod state;
@@ -101,9 +102,29 @@ impl Simulator {
         measure::expectation_z(&self.sv, qubit)
     }
 
+    /// Bloch vector of one qubit: `[<X>, <Y>, <Z>]`. Streams, so any register size.
+    pub fn bloch_vector(&self, qubit: u32) -> Result<[f64; 3], QsimError> {
+        measure::bloch_vector(&self.sv, qubit)
+    }
+
+    /// The `k` most probable basis states, largest first.
+    pub fn top_amplitudes(&self, k: usize) -> Vec<(u64, C)> {
+        measure::top_amplitudes(&self.sv, k)
+    }
+
+    /// Two-qubit reduced density matrix; see [`measure::reduced_two`].
+    pub fn reduced_two(&self, a: u32, b: u32) -> Result<[f64; 32], QsimError> {
+        measure::reduced_two(&self.sv, a, b)
+    }
+
     /// Measure one qubit, collapsing the state onto the observed outcome.
     pub fn measure(&mut self, qubit: u32) -> Result<u8, QsimError> {
         measure::measure(&mut self.sv, qubit, &mut self.rng)
+    }
+
+    /// Collapse one qubit onto a given outcome; see [`measure::collapse`].
+    pub fn collapse(&mut self, qubit: u32, outcome: u8) -> Result<(), QsimError> {
+        measure::collapse(&mut self.sv, qubit, outcome)
     }
 
     /// Sample without collapsing, flattened to `[state, count, state, count, ...]`.
@@ -264,8 +285,52 @@ impl JsSimulator {
         self.inner.expectation_z(qubit).map_err(js_err)
     }
 
+    /// Bloch vector of one qubit as `[x, y, z]`.
+    ///
+    /// The whole-register summary the views actually need, without ever pulling
+    /// a full array across the boundary — so it stays available at register
+    /// sizes where `amplitudes()` is refused outright.
+    #[wasm_bindgen(js_name = blochVector)]
+    pub fn bloch_vector(&self, qubit: u32) -> Result<Vec<f64>, JsValue> {
+        self.inner
+            .bloch_vector(qubit)
+            .map(|v| v.to_vec())
+            .map_err(js_err)
+    }
+
+    /// Two-qubit reduced density matrix as 16 interleaved `(re, im)` entries,
+    /// row-major, with the subsystem index `bit_a + 2 * bit_b`.
+    #[wasm_bindgen(js_name = reducedTwoFlat)]
+    pub fn reduced_two_flat(&self, a: u32, b: u32) -> Result<Vec<f64>, JsValue> {
+        self.inner.reduced_two(a, b).map(|m| m.to_vec()).map_err(js_err)
+    }
+
+    /// The `k` most probable basis states, flattened to
+    /// `[index, re, im, index, re, im, ...]`, largest first.
+    ///
+    /// Indices are `f64` — exact to 2^53, so well past any addressable register.
+    #[wasm_bindgen(js_name = topAmplitudesFlat)]
+    pub fn top_amplitudes_flat(&self, k: u32) -> Vec<f64> {
+        let mut out = Vec::with_capacity(k as usize * 3);
+        for (i, a) in self.inner.top_amplitudes(k as usize) {
+            out.push(i as f64);
+            out.push(a.re);
+            out.push(a.im);
+        }
+        out
+    }
+
     pub fn measure(&mut self, qubit: u32) -> Result<u32, JsValue> {
         self.inner.measure(qubit).map(|b| b as u32).map_err(js_err)
+    }
+
+    /// Collapse one qubit onto a given outcome rather than a drawn one.
+    ///
+    /// Post-selection. The caller that needs this is one replaying an outcome it
+    /// already knows — a recorded shot, say — where drawing again would give a
+    /// different answer and defeat the point.
+    pub fn collapse(&mut self, qubit: u32, outcome: u32) -> Result<(), JsValue> {
+        self.inner.collapse(qubit, outcome as u8).map_err(js_err)
     }
 
     #[wasm_bindgen(js_name = sampleFlat)]
@@ -316,6 +381,124 @@ impl JsSimulator {
     #[wasm_bindgen(js_name = setBasisState)]
     pub fn set_basis_state(&mut self, index: f64) -> Result<(), JsValue> {
         self.inner.set_basis_state(index as usize).map_err(js_err)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// QAOA, as a circuit a caller can walk
+// ---------------------------------------------------------------------------
+
+/// The gates [`qaoa::run_qaoa`] would apply for a config, flattened.
+///
+/// Returns `[n_gates, then per gate: name_id, part_tag, part_index, n_qubits,
+/// qubits..., n_params, params...]`, where `name_id` indexes [`gate_names`] and
+/// `part_tag` is 0 superpose, 1 budget, 2 penalty, 3 mixer. See
+/// [`qaoa_plan::encode`].
+///
+/// The penalty list arrives as a flat qubit array plus offsets, one target and
+/// one multiplier per penalty — the shape a `Vec<PenaltySpec>` takes when it has
+/// to cross a boundary that carries only numbers.
+///
+/// `entities` are deliberately absent: they say how to *read* an allocation out
+/// of a basis state and have no effect on the circuit at all, so a caller that
+/// wants the gates should not have to describe them.
+#[wasm_bindgen(js_name = qaoaPlan)]
+pub fn qaoa_plan(
+    weights: Vec<f64>,
+    total_water: f64,
+    gamma: f64,
+    beta: f64,
+    global_lambda: f64,
+    penalty_qubits: Vec<u32>,
+    penalty_offsets: Vec<u32>,
+    penalty_targets: Vec<f64>,
+    penalty_multipliers: Vec<f64>,
+) -> Result<Vec<f64>, JsValue> {
+    let err = |m: String| JsValue::from_str(&m);
+    if weights.is_empty() {
+        return Err(err("qaoaPlan needs at least one weight".into()));
+    }
+    if penalty_offsets.is_empty() {
+        return Err(err("penalty_offsets needs a leading zero even with no penalties".into()));
+    }
+    let count = penalty_offsets.len() - 1;
+    if penalty_targets.len() != count || penalty_multipliers.len() != count {
+        return Err(err(format!(
+            "{count} penalties from offsets, but {} targets and {} multipliers",
+            penalty_targets.len(),
+            penalty_multipliers.len()
+        )));
+    }
+    if penalty_offsets[0] != 0 || *penalty_offsets.last().unwrap() as usize != penalty_qubits.len()
+    {
+        return Err(err("penalty_offsets must run from 0 to penalty_qubits.len()".into()));
+    }
+
+    let mut penalties = Vec::with_capacity(count);
+    for i in 0..count {
+        let (from, to) = (penalty_offsets[i] as usize, penalty_offsets[i + 1] as usize);
+        if to < from {
+            return Err(err("penalty_offsets must not decrease".into()));
+        }
+        let qubits: Vec<usize> = penalty_qubits[from..to].iter().map(|q| *q as usize).collect();
+        if let Some(bad) = qubits.iter().find(|q| **q >= weights.len()) {
+            return Err(err(format!(
+                "penalty {i} names qubit {bad}, but there are {} weights",
+                weights.len()
+            )));
+        }
+        penalties.push(qaoa::PenaltySpec::new(
+            format!("penalty {i}"),
+            qubits,
+            penalty_targets[i],
+            penalty_multipliers[i],
+        ));
+    }
+
+    let config = qaoa::QaoaConfig {
+        total_water,
+        gamma,
+        beta,
+        global_lambda,
+        weights,
+        // The circuit does not read these; see the note above.
+        entities: Vec::new(),
+        penalties,
+        shots: 0,
+        seed: 0,
+    };
+    Ok(qaoa_plan::encode(&qaoa_plan::plan(&config)))
+}
+
+// ---------------------------------------------------------------------------
+// Randomness, shared with the sharded orchestrator
+// ---------------------------------------------------------------------------
+
+/// The engine's own generator, exposed so a caller can draw from the *same*
+/// stream the whole-state path uses.
+///
+/// A sharded measurement cannot be drawn inside a shard — the outcome has to be
+/// decided once against the global marginal, which only the orchestrator can
+/// see. If the orchestrator brings its own generator, the same circuit under the
+/// same seed observes different outcomes depending on how the register happened
+/// to be held, which makes the two execution paths impossible to compare. Using
+/// this instead makes them bit-identical.
+#[wasm_bindgen(js_name = Prng)]
+pub struct JsRng {
+    inner: Rng,
+}
+
+#[wasm_bindgen(js_class = Prng)]
+impl JsRng {
+    #[wasm_bindgen(constructor)]
+    pub fn new(seed: f64) -> JsRng {
+        JsRng { inner: Rng::new(seed as u64) }
+    }
+
+    /// Next uniform in `[0, 1)`, advancing the stream.
+    #[wasm_bindgen(js_name = nextF64)]
+    pub fn next_f64(&mut self) -> f64 {
+        self.inner.next_f64()
     }
 }
 
@@ -513,6 +696,51 @@ impl JsShard {
         out
     }
 
+    /// One-qubit reduced density matrix over this slice as `[r00, re01, im01, r11]`,
+    /// for a *local* qubit. Sum the four across shards to get the global matrix.
+    #[wasm_bindgen(js_name = localReducedOne)]
+    pub fn local_reduced_one(&self, qubit: u32) -> Result<Vec<f64>, JsValue> {
+        self.inner
+            .local_reduced_one(qubit)
+            .map(|v| v.to_vec())
+            .map_err(js_err)
+    }
+
+    /// This slice's `k` largest amplitudes as `[local_index, re, im, ...]`.
+    #[wasm_bindgen(js_name = localTopAmplitudesFlat)]
+    pub fn local_top_amplitudes_flat(&self, k: u32) -> Vec<f64> {
+        let mut out = Vec::with_capacity(k as usize * 3);
+        for (i, a) in self.inner.local_top_amplitudes(k as usize) {
+            out.push(i as f64);
+            out.push(a.re);
+            out.push(a.im);
+        }
+        out
+    }
+
+    /// Collapse a *local* qubit onto an outcome the orchestrator drew.
+    #[wasm_bindgen(js_name = collapseLocal)]
+    pub fn collapse_local(&mut self, qubit: u32, outcome: u32, scale: f64) -> Result<(), JsValue> {
+        self.inner
+            .collapse_local(qubit, outcome as u8, scale)
+            .map_err(js_err)
+    }
+
+    /// Empty the slice — used for the shards a global measurement rules out.
+    pub fn clear(&mut self) {
+        self.inner.clear();
+    }
+
+    /// `sum(own * conj(partner))` over one block as `[re, im]`, with the partner's
+    /// block already staged in the scratch buffer.
+    #[wasm_bindgen(js_name = dotScratch)]
+    pub fn dot_scratch(&self, block: u32) -> Result<Vec<f64>, JsValue> {
+        self.inner
+            .dot_scratch(block as usize)
+            .map(|v| v.to_vec())
+            .map_err(js_err)
+    }
+
     /// Probabilities across this slice. Guarded like the whole-state version.
     pub fn probabilities(&self) -> Result<Vec<f64>, JsValue> {
         if self.inner.local_qubits() > measure::FULL_ARRAY_QUBIT_LIMIT {
@@ -540,6 +768,24 @@ pub fn plan_gate(
     let steps =
         shard::plan_gate(name, &qubits, &params, local_qubits, shard_bits).map_err(js_err)?;
     Ok(shard::encode_plan(&steps))
+}
+
+/// Two-qubit reduced density matrix over a raw amplitude array.
+///
+/// `amps` is `[re0, im0, re1, im1, ...]` for a power-of-two number of states.
+/// Sixteen interleaved `(re, im)` entries come back, row-major, with the
+/// subsystem index `bit_a + 2 * bit_b`.
+///
+/// This exists for the sharded path. A pair of qubits straddling two shards has
+/// no slice-local reduced matrix, so the orchestrator reassembles the amplitudes
+/// and asks here — which keeps one implementation of the arithmetic rather than
+/// a second copy in the caller that agrees only by inspection.
+#[wasm_bindgen(js_name = reducedTwoOf)]
+pub fn reduced_two_of(amps: Vec<f64>, a: u32, b: u32) -> Result<Vec<f64>, JsValue> {
+    let states: Vec<C> = amps.chunks_exact(2).map(|p| C::new(p[0], p[1])).collect();
+    measure::reduced_two_of(&states, a, b)
+        .map(|m| m.to_vec())
+        .map_err(js_err)
 }
 
 /// Uncontrolled gate names, indexed by the `base_id` a plan step carries.

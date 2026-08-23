@@ -37,6 +37,8 @@ pub enum QsimError {
     BlockOutOfRange { block: usize, blocks: usize },
     /// Gate cannot run as an elementwise shard pairing (SWAP must be decomposed).
     NotPairable(String),
+    /// Asked to project onto an outcome the state cannot produce.
+    ImpossibleOutcome { qubit: u32, outcome: u8 },
 }
 
 impl std::fmt::Display for QsimError {
@@ -75,6 +77,10 @@ impl std::fmt::Display for QsimError {
             QsimError::BlockOutOfRange { block, blocks } => {
                 write!(f, "exchange block {block} out of range ({blocks} blocks)")
             }
+            QsimError::ImpossibleOutcome { qubit, outcome } => write!(
+                f,
+                "qubit {qubit} cannot be {outcome}: that branch holds no probability"
+            ),
             QsimError::NotPairable(g) => write!(
                 f,
                 "gate {g} cannot run as a shard pairing; decompose it first"

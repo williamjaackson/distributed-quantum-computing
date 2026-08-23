@@ -635,3 +635,477 @@ fn benchmark_workload_is_unitary_and_reports_its_gate_count() {
         assert_close(sim.norm(), 1.0, &format!("norm after benchmark n={n}"));
     }
 }
+
+// ---------------------------------------------------------------------------
+// Streaming summaries
+//
+// These are what makes a large register visualisable: they answer "what is this
+// qubit doing" and "which states carry the probability" in one pass, with no
+// buffer proportional to the state. Both are checked against the full
+// amplitude array, which is the thing they exist to avoid needing.
+// ---------------------------------------------------------------------------
+
+/// Bloch vector computed the obvious way, from the whole amplitude array.
+fn naive_bloch(amps: &[C], qubit: u32) -> [f64; 3] {
+    let bit = 1usize << qubit;
+    let (mut r00, mut r11, mut re01, mut im01) = (0.0, 0.0, 0.0, 0.0);
+    for (i, a) in amps.iter().enumerate() {
+        if i & bit == 0 {
+            let b = amps[i | bit];
+            r00 += a.norm_sqr();
+            re01 += a.re * b.re + a.im * b.im;
+            im01 += a.im * b.re - a.re * b.im;
+        } else {
+            r11 += a.norm_sqr();
+        }
+    }
+    [2.0 * re01, -2.0 * im01, r00 - r11]
+}
+
+#[test]
+fn bloch_vector_matches_naive_reference() {
+    for n in 1..=5u32 {
+        let amps = random_state(n, 0xB10C + n as u64);
+        let sv = state_from(n, &amps);
+        for q in 0..n {
+            let got = qsim::measure::bloch_vector(&sv, q).unwrap();
+            let want = naive_bloch(&amps, q);
+            for (axis, (g, w)) in got.iter().zip(want.iter()).enumerate() {
+                assert_close(*g, *w, &format!("bloch axis {axis} of qubit {q}, n={n}"));
+            }
+        }
+    }
+}
+
+#[test]
+fn bloch_vector_is_a_unit_arrow_for_an_unentangled_qubit() {
+    // |+> on qubit 0, |0> elsewhere: qubit 0 points along +X at full length, and
+    // every other qubit points at the north pole.
+    let mut sim = Simulator::new(3).unwrap();
+    sim.apply_named("h", &[0], &[]).unwrap();
+    let [x, y, z] = sim.bloch_vector(0).unwrap();
+    assert_close(x, 1.0, "<X> of |+>");
+    assert_close(y, 0.0, "<Y> of |+>");
+    assert_close(z, 0.0, "<Z> of |+>");
+    for q in 1..3 {
+        let [_, _, z] = sim.bloch_vector(q).unwrap();
+        assert_close(z, 1.0, &format!("<Z> of untouched qubit {q}"));
+    }
+}
+
+#[test]
+fn bloch_vector_collapses_to_the_origin_under_entanglement() {
+    // Both halves of a Bell pair have no state of their own: the arrow has zero
+    // length even though the register as a whole is perfectly pure.
+    let mut sim = Simulator::new(2).unwrap();
+    sim.prepare_bell().unwrap();
+    assert_close(sim.norm(), 1.0, "norm of a Bell pair");
+    for q in 0..2 {
+        let [x, y, z] = sim.bloch_vector(q).unwrap();
+        let r = (x * x + y * y + z * z).sqrt();
+        assert_close(r, 0.0, &format!("bloch radius of Bell qubit {q}"));
+    }
+}
+
+#[test]
+fn bloch_vector_tracks_a_rotation_about_y() {
+    // RY(theta)|0> sits at angle theta from the north pole in the XZ plane.
+    for k in 0..8 {
+        let theta = std::f64::consts::PI * k as f64 / 4.0;
+        let mut sim = Simulator::new(1).unwrap();
+        sim.apply_named("ry", &[0], &[theta]).unwrap();
+        let [x, y, z] = sim.bloch_vector(0).unwrap();
+        assert_close(x, theta.sin(), &format!("<X> at theta={theta}"));
+        assert_close(y, 0.0, &format!("<Y> at theta={theta}"));
+        assert_close(z, theta.cos(), &format!("<Z> at theta={theta}"));
+    }
+}
+
+#[test]
+fn bloch_vector_rejects_a_qubit_out_of_range() {
+    let sim = Simulator::new(2).unwrap();
+    assert!(sim.bloch_vector(2).is_err(), "qubit 2 of a 2-qubit register");
+}
+
+#[test]
+fn top_amplitudes_matches_a_full_sort() {
+    for n in 1..=6u32 {
+        let amps = random_state(n, 0x7013 + n as u64);
+        let sv = state_from(n, &amps);
+        // The reference: sort everything, which is exactly what the streaming
+        // version must never do.
+        let mut all: Vec<(usize, f64)> =
+            amps.iter().enumerate().map(|(i, a)| (i, a.norm_sqr())).collect();
+        all.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap().then(a.0.cmp(&b.0)));
+
+        for k in [1usize, 3, 8, 1 << n, (1 << n) + 5] {
+            let got = qsim::measure::top_amplitudes(&sv, k);
+            let want = k.min(1 << n);
+            assert_eq!(got.len(), want, "top_amplitudes({k}) length for n={n}");
+            // Compare probabilities rather than indices: equal probabilities may
+            // legitimately come back in either order.
+            for (rank, (_, a)) in got.iter().enumerate() {
+                assert_close(
+                    a.norm_sqr(),
+                    all[rank].1,
+                    &format!("probability at rank {rank} of top {k}, n={n}"),
+                );
+            }
+            // Every returned index must carry the amplitude it claims.
+            for (i, a) in &got {
+                assert_states_close(
+                    &[*a],
+                    &[amps[*i as usize]],
+                    &format!("amplitude reported for index {i}, n={n}"),
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn top_amplitudes_skips_states_with_no_amplitude() {
+    // A GHZ state occupies exactly two of its 2^n basis states, so asking for
+    // more than two must not pad the list with zeros.
+    let mut sim = Simulator::new(5).unwrap();
+    sim.prepare_ghz().unwrap();
+    let top = sim.top_amplitudes(8);
+    assert_eq!(top.len(), 2, "occupied states in a 5-qubit GHZ state");
+    let mut indices: Vec<u64> = top.iter().map(|(i, _)| *i).collect();
+    indices.sort_unstable();
+    assert_eq!(indices, vec![0, 31], "GHZ occupies |00000> and |11111>");
+    assert!(qsim::measure::top_amplitudes(&StateVector::try_new(3).unwrap(), 0).is_empty());
+}
+
+#[test]
+fn top_amplitudes_finds_the_marked_state_after_grover() {
+    let mut sim = Simulator::new(6).unwrap();
+    let marked = 41usize;
+    sim.run_grover(marked, -1).unwrap();
+    let top = sim.top_amplitudes(1);
+    assert_eq!(top[0].0, marked as u64, "peak after Grover");
+}
+
+/// Two-qubit reduced density matrix, built the obvious way.
+fn naive_reduced_two(amps: &[C], a: u32, b: u32) -> [f64; 32] {
+    let ba = 1usize << a;
+    let bb = 1usize << b;
+    let mut rho = [0.0f64; 32];
+    for (i, x) in amps.iter().enumerate() {
+        let k = usize::from(i & ba != 0) | (usize::from(i & bb != 0) << 1);
+        for (j, y) in amps.iter().enumerate() {
+            // Only pairs that agree on every *other* qubit contribute.
+            if (i & !ba & !bb) != (j & !ba & !bb) {
+                continue;
+            }
+            let l = usize::from(j & ba != 0) | (usize::from(j & bb != 0) << 1);
+            let at = 2 * (k * 4 + l);
+            rho[at] += x.re * y.re + x.im * y.im;
+            rho[at + 1] += x.im * y.re - x.re * y.im;
+        }
+    }
+    rho
+}
+
+#[test]
+fn reduced_two_matches_naive_reference() {
+    for n in 2..=5u32 {
+        let amps = random_state(n, 0x2D0 + n as u64);
+        let sv = state_from(n, &amps);
+        for a in 0..n {
+            for b in 0..n {
+                if a == b {
+                    assert!(qsim::measure::reduced_two(&sv, a, b).is_err(), "a == b");
+                    continue;
+                }
+                let got = qsim::measure::reduced_two(&sv, a, b).unwrap();
+                let want = naive_reduced_two(&amps, a, b);
+                for (idx, (g, w)) in got.iter().zip(want.iter()).enumerate() {
+                    assert_close(*g, *w, &format!("rho[{idx}] for ({a},{b}), n={n}"));
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn reduced_two_has_the_marginals_on_its_diagonal() {
+    // Tracing out either qubit of the pair must give back the one-qubit matrix,
+    // which ties reduced_two to reduced_one rather than only to its own naive twin.
+    let amps = random_state(4, 0x11FE);
+    let sv = state_from(4, &amps);
+    for a in 0..4u32 {
+        for b in 0..4u32 {
+            if a == b {
+                continue;
+            }
+            let rho = qsim::measure::reduced_two(&sv, a, b).unwrap();
+            let diag = |k: usize| rho[2 * (k * 4 + k)];
+            // Summing over qubit b's value leaves qubit a's marginal.
+            let a1 = diag(1) + diag(3);
+            let [_, _, _, want_a] = qsim::measure::reduced_one(&sv, a).unwrap();
+            assert_close(a1, want_a, &format!("P({a}=1) from the pair ({a},{b})"));
+            let b1 = diag(2) + diag(3);
+            let [_, _, _, want_b] = qsim::measure::reduced_one(&sv, b).unwrap();
+            assert_close(b1, want_b, &format!("P({b}=1) from the pair ({a},{b})"));
+            assert_close(
+                diag(0) + diag(1) + diag(2) + diag(3),
+                1.0,
+                &format!("trace of the pair ({a},{b})"),
+            );
+        }
+    }
+}
+
+#[test]
+fn reduced_two_of_a_bell_pair_is_the_bell_projector() {
+    // (|00> + |11>)/sqrt(2): the only non-zero entries are the four corners of
+    // the 00/11 block, each exactly 1/2 with no imaginary part.
+    let mut sim = Simulator::new(2).unwrap();
+    sim.prepare_bell().unwrap();
+    let rho = sim.reduced_two(0, 1).unwrap();
+    for k in 0..4usize {
+        for l in 0..4usize {
+            let at = 2 * (k * 4 + l);
+            let want = if (k == 0 || k == 3) && (l == 0 || l == 3) { 0.5 } else { 0.0 };
+            assert_close(rho[at], want, &format!("Re rho[{k}][{l}]"));
+            assert_close(rho[at + 1], 0.0, &format!("Im rho[{k}][{l}]"));
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Multi-controlled gates
+//
+// `apply_controlled` folds any number of controls into one mask, so the kernels
+// never had a two-control limit — only name dispatch did. These check that the
+// variadic names reach the same kernel with the right split, at every control
+// count a register that size allows.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn multi_controlled_matches_naive_reference() {
+    for n in 2..=6u32 {
+        let amps = random_state(n, 0x9C7 + n as u64);
+        for controls in 1..n {
+            let qubits: Vec<u32> = (0..=controls).collect();
+            let ctrl = &qubits[..controls as usize];
+            let target = qubits[controls as usize];
+            for (name, gate) in [("mcx", Gate::X), ("mcz", Gate::Z)] {
+                let mut sv = state_from(n, &amps);
+                qsim::dispatch::apply_named(&mut sv, name, &qubits, &[]).unwrap();
+                let want = naive_controlled(&amps, gate.matrix(), ctrl, target);
+                assert_states_close(
+                    sv.amps(),
+                    &want,
+                    &format!("{name} with {controls} control(s), n={n}"),
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn multi_controlled_agrees_with_the_fixed_arity_names() {
+    // mcx with two controls *is* ccx; a variadic name that disagreed with the
+    // fixed one would be the subtle kind of wrong.
+    let amps = random_state(4, 0xA11A5);
+    for (variadic, fixed, qubits) in [
+        ("mcx", "cx", vec![0u32, 1]),
+        ("mcz", "cz", vec![2u32, 3]),
+        ("mcx", "ccx", vec![0u32, 1, 2]),
+        ("mcz", "ccz", vec![1u32, 2, 3]),
+    ] {
+        let mut a = state_from(4, &amps);
+        let mut b = state_from(4, &amps);
+        qsim::dispatch::apply_named(&mut a, variadic, &qubits, &[]).unwrap();
+        qsim::dispatch::apply_named(&mut b, fixed, &qubits, &[]).unwrap();
+        assert_states_close(a.amps(), b.amps(), &format!("{variadic} vs {fixed}"));
+    }
+}
+
+#[test]
+fn multi_controlled_flips_only_the_all_ones_row() {
+    // The property Grover's oracle relies on: with every control set, and only
+    // then, the target moves.
+    let n = 5u32;
+    for controls in 1..n {
+        let qubits: Vec<u32> = (0..=controls).collect();
+        let cmask: usize = (0..controls).map(|c| 1usize << c).sum();
+        let target_bit = 1usize << qubits[controls as usize];
+        for start in 0..(1usize << n) {
+            let mut sim = Simulator::new(n).unwrap();
+            sim.set_basis_state(start).unwrap();
+            sim.apply_named("mcx", &qubits, &[]).unwrap();
+            let want = if start & cmask == cmask { start ^ target_bit } else { start };
+            let p = sim.probabilities().unwrap();
+            assert_close(p[want], 1.0, &format!("mcx({controls} controls) on |{start}>"));
+        }
+    }
+}
+
+#[test]
+fn multi_controlled_needs_at_least_one_control() {
+    let mut sim = Simulator::new(3).unwrap();
+    // One qubit is a plain gate, and saying "multi-controlled" for it is a
+    // caller mistake worth reporting rather than silently accepting.
+    assert!(sim.apply_named("mcz", &[0], &[]).is_err(), "mcz with no controls");
+    assert!(sim.apply_named("mcx", &[], &[]).is_err(), "mcx with no qubits");
+    assert!(sim.apply_named("mcx", &[0, 0], &[]).is_err(), "mcx with a repeated qubit");
+}
+
+#[test]
+fn grover_scales_with_a_multi_controlled_oracle() {
+    // The reason any of this exists: a phase flip on one state out of 2^n is a Z
+    // with n-1 controls, so an n-qubit Grover search is only expressible once
+    // the control count is not fixed by the gate's name.
+    for n in 2..=8u32 {
+        let marked = (1usize << n) - 2;
+        let rounds = ((std::f64::consts::FRAC_PI_4) * ((1u64 << n) as f64).sqrt()).floor() as u32;
+        let mut sim = Simulator::new(n).unwrap();
+        let all: Vec<u32> = (0..n).collect();
+
+        for q in 0..n {
+            sim.apply_named("h", &[q], &[]).unwrap();
+        }
+        for _ in 0..rounds.max(1) {
+            // Oracle: relabel the marked state as all-ones, flip its phase, undo.
+            for q in 0..n {
+                if (marked >> q) & 1 == 0 {
+                    sim.apply_named("x", &[q], &[]).unwrap();
+                }
+            }
+            sim.apply_named("mcz", &all, &[]).unwrap();
+            for q in 0..n {
+                if (marked >> q) & 1 == 0 {
+                    sim.apply_named("x", &[q], &[]).unwrap();
+                }
+            }
+            // Diffusion: reflect about the average.
+            for q in 0..n {
+                sim.apply_named("h", &[q], &[]).unwrap();
+                sim.apply_named("x", &[q], &[]).unwrap();
+            }
+            sim.apply_named("mcz", &all, &[]).unwrap();
+            for q in 0..n {
+                sim.apply_named("x", &[q], &[]).unwrap();
+                sim.apply_named("h", &[q], &[]).unwrap();
+            }
+        }
+
+        let p = sim.probabilities().unwrap();
+        let flat = 1.0 / (1u64 << n) as f64;
+        assert!(
+            p[marked] > 0.6 && p[marked] > flat * 4.0,
+            "n={n}: P(marked) = {} against a flat {flat}",
+            p[marked]
+        );
+        let peak = (0..p.len()).max_by(|a, b| p[*a].partial_cmp(&p[*b]).unwrap()).unwrap();
+        assert_eq!(peak, marked, "n={n}: peak is not the marked state");
+        assert_close(sim.norm(), 1.0, &format!("norm after Grover n={n}"));
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Post-selection
+//
+// `collapse` is the projection `measure` performs with the outcome supplied
+// rather than drawn. Two callers need the split: a sharded register, where the
+// draw has to happen once against a global marginal no shard can see, and
+// anything replaying an outcome it already knows.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn collapse_matches_what_measure_does_to_the_state() {
+    for n in 1..=4u32 {
+        let amps = random_state(n, 0xC0115E + n as u64);
+        for q in 0..n {
+            // Measure once to learn the outcome, then check collapsing another
+            // copy onto that same outcome lands in the same place.
+            let mut measured = state_from(n, &amps);
+            let mut rng = qsim::rng::Rng::new(0xABCD);
+            let outcome = qsim::measure::measure(&mut measured, q, &mut rng).unwrap();
+
+            let mut projected = state_from(n, &amps);
+            qsim::measure::collapse(&mut projected, q, outcome).unwrap();
+            assert_states_close(
+                projected.amps(),
+                measured.amps(),
+                &format!("collapse(q{q}, {outcome}) against measure, n={n}"),
+            );
+            assert_close(projected.norm(), 1.0, "norm after collapse");
+        }
+    }
+}
+
+#[test]
+fn collapse_can_select_either_branch() {
+    // A qubit in an even superposition can be projected either way, and the
+    // choice decides the outcome rather than chance.
+    for outcome in [0u8, 1] {
+        let mut sim = Simulator::new(2).unwrap();
+        sim.apply_named("h", &[0], &[]).unwrap();
+        sim.apply_named("h", &[1], &[]).unwrap();
+        sim.collapse(0, outcome).unwrap();
+        let p = sim.probabilities().unwrap();
+        let mass: f64 = (0..4).filter(|i| (i >> 0) & 1 == outcome as usize).map(|i| p[i]).sum();
+        assert_close(mass, 1.0, &format!("all probability has qubit 0 = {outcome}"));
+        assert_close(sim.norm(), 1.0, "norm after collapse");
+    }
+}
+
+#[test]
+fn collapsing_every_qubit_reaches_the_chosen_basis_state() {
+    // The operation a replayed readout needs: walk the qubits, forcing each bit,
+    // and end on exactly the state that was asked for.
+    let n = 4u32;
+    let mut sim = Simulator::new(n).unwrap();
+    sim.prepare_uniform().unwrap();
+    let target = 0b1011usize;
+    for q in 0..n {
+        sim.collapse(q, ((target >> q) & 1) as u8).unwrap();
+    }
+    let p = sim.probabilities().unwrap();
+    assert_close(p[target], 1.0, "probability of the chosen state");
+    assert_close(sim.norm(), 1.0, "norm after a full readout");
+}
+
+#[test]
+fn collapse_refuses_an_outcome_the_state_cannot_produce() {
+    // |0> has no |1> branch. Projecting onto one has no answer, and returning an
+    // unnormalised state quietly would be worse than saying so.
+    let mut sim = Simulator::new(2).unwrap();
+    let err = sim.collapse(0, 1).unwrap_err();
+    assert!(
+        matches!(err, qsim::state::QsimError::ImpossibleOutcome { qubit: 0, outcome: 1 }),
+        "expected ImpossibleOutcome, got {err:?}"
+    );
+    // And the state is untouched by the refusal.
+    assert_close(sim.probabilities().unwrap()[0], 1.0, "state after a refused collapse");
+    assert!(sim.collapse(5, 0).is_err(), "qubit out of range");
+}
+
+#[test]
+fn reduced_two_over_a_slice_matches_the_state_vector_form() {
+    // The sharded path has the amplitudes and no register, so it calls the slice
+    // form. It has to be the same arithmetic, not merely similar.
+    for n in 2..=5u32 {
+        let amps = random_state(n, 0x511CE + n as u64);
+        let sv = state_from(n, &amps);
+        for a in 0..n {
+            for b in 0..n {
+                if a == b {
+                    assert!(qsim::measure::reduced_two_of(&amps, a, b).is_err(), "a == b");
+                    continue;
+                }
+                let over_slice = qsim::measure::reduced_two_of(&amps, a, b).unwrap();
+                let over_state = qsim::measure::reduced_two(&sv, a, b).unwrap();
+                for (i, (x, y)) in over_slice.iter().zip(over_state.iter()).enumerate() {
+                    assert_close(*x, *y, &format!("rho[{i}] for ({a},{b}), n={n}"));
+                }
+            }
+        }
+    }
+    let amps = random_state(3, 7);
+    assert!(qsim::measure::reduced_two_of(&amps, 0, 3).is_err(), "qubit out of range");
+}

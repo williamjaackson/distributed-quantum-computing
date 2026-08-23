@@ -8,6 +8,15 @@ use crate::complex::Mat2;
 use crate::gates::{self, Gate};
 use crate::state::{QsimError, StateVector};
 
+/// Control count for a gate whose arity comes from the *call* rather than from
+/// its name — every qubit but the last is a control.
+///
+/// `apply_controlled` has always taken an arbitrary control slice and folded it
+/// into a mask, so nothing about the kernels was ever limited to two controls.
+/// The limit was here, in name dispatch: a name like "ccx" carries its arity, and
+/// there is no name for "as many controls as I passed you". This is that name.
+pub const VARIADIC: usize = usize::MAX;
+
 /// A parsed operation.
 #[derive(Clone, Copy, Debug)]
 pub enum Op {
@@ -63,6 +72,17 @@ pub fn parse_op(name: &str, params: &[f64]) -> Result<Op, QsimError> {
         return Ok(Op::Unitary { gate: base, controls });
     }
 
+    // Multi-controlled forms. The control count is whatever the caller passes,
+    // which is what makes an n-qubit Grover oracle expressible at all: its phase
+    // flip is a Z with n-1 controls, and there is no fixed name for that.
+    if let Some(gate) = match n {
+        "mcx" | "mcnot" | "mct" => Some(Gate::X),
+        "mcz" => Some(Gate::Z),
+        _ => None,
+    } {
+        return Ok(Op::Unitary { gate, controls: VARIADIC });
+    }
+
     match n {
         "u3" | "u" => Ok(Op::Unitary {
             gate: Gate::U3(
@@ -84,11 +104,21 @@ pub fn parse_op(name: &str, params: &[f64]) -> Result<Op, QsimError> {
 }
 
 impl Op {
-    /// Qubits this operation expects.
-    pub fn arity(self) -> usize {
+    /// Qubits this operation expects, or `None` when that depends on the call.
+    pub fn arity(self) -> Option<usize> {
         match self {
-            Op::Swap => 2,
-            Op::Unitary { controls, .. } => controls + 1,
+            Op::Swap => Some(2),
+            Op::Unitary { controls, .. } if controls == VARIADIC => None,
+            Op::Unitary { controls, .. } => Some(controls + 1),
+        }
+    }
+
+    /// Controls this operation takes for a call carrying `n_qubits` qubits.
+    pub fn controls_for(self, n_qubits: usize) -> usize {
+        match self {
+            Op::Swap => 0,
+            Op::Unitary { controls, .. } if controls == VARIADIC => n_qubits.saturating_sub(1),
+            Op::Unitary { controls, .. } => controls,
         }
     }
 
@@ -100,14 +130,13 @@ impl Op {
     }
 
     pub fn check_arity(self, name: &str, got: usize) -> Result<(), QsimError> {
-        if got == self.arity() {
-            Ok(())
-        } else {
-            Err(QsimError::WrongArity {
-                gate: name.to_string(),
-                expected: self.arity(),
-                got,
-            })
+        match self.arity() {
+            Some(expected) if got == expected => Ok(()),
+            Some(expected) => Err(QsimError::WrongArity { gate: name.to_string(), expected, got }),
+            // Variadic: at least one control and a target. A "multi-controlled"
+            // gate with no controls is a plain gate and the caller should say so.
+            None if got >= 2 => Ok(()),
+            None => Err(QsimError::WrongArity { gate: name.to_string(), expected: 2, got }),
         }
     }
 }
@@ -124,8 +153,8 @@ pub fn apply_named(
     op.check_arity(name, qubits.len())?;
     match op {
         Op::Swap => gates::apply_swap(sv, qubits[0], qubits[1]),
-        Op::Unitary { gate, controls } => {
-            let (ctrl, target) = qubits.split_at(controls);
+        Op::Unitary { gate, .. } => {
+            let (ctrl, target) = qubits.split_at(op.controls_for(qubits.len()));
             gates::apply_controlled(sv, gate, ctrl, target[0])
         }
     }
@@ -134,7 +163,7 @@ pub fn apply_named(
 /// Every gate name [`apply_named`] understands, for UI palettes.
 pub const GATE_NAMES: &[&str] = &[
     "h", "x", "y", "z", "s", "sdg", "t", "tdg", "rx", "ry", "rz", "p", "u3", "cx", "cy", "cz",
-    "ch", "crx", "cry", "crz", "cp", "ccx", "ccz", "swap",
+    "ch", "crx", "cry", "crz", "cp", "ccx", "ccz", "mcx", "mcz", "swap",
 ];
 
 /// Gate names in their *uncontrolled* form.

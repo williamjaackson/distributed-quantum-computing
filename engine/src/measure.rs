@@ -68,6 +68,162 @@ pub fn expectation_z(sv: &StateVector, qubit: u32) -> Result<f64, QsimError> {
     Ok(1.0 - 2.0 * probability_of_one(sv, qubit)?)
 }
 
+/// One-qubit reduced density matrix elements, as `[r00, re01, im01, r11]`.
+///
+/// Streams the state vector with two accumulators per element, so it works at
+/// any register size — unlike anything that has to materialise a second array.
+/// The off-diagonal element is the part that matters: the diagonal is just the
+/// marginal, while `r01` carries the phase relationship *and* is the only part
+/// entanglement can destroy. That is what makes the Bloch radius meaningful.
+pub fn reduced_one(sv: &StateVector, qubit: u32) -> Result<[f64; 4], QsimError> {
+    sv.check_qubit(qubit)?;
+    let step = 1usize << qubit;
+    let mut r00 = 0.0;
+    let mut r11 = 0.0;
+    let mut re01 = 0.0;
+    let mut im01 = 0.0;
+    for block in sv.amps().chunks_exact(step << 1) {
+        let (lo, hi) = block.split_at(step);
+        for (a, b) in lo.iter().zip(hi.iter()) {
+            r00 += a.norm_sqr();
+            r11 += b.norm_sqr();
+            // a * conj(b), accumulated over every setting of the other qubits.
+            re01 += a.re * b.re + a.im * b.im;
+            im01 += a.im * b.re - a.re * b.im;
+        }
+    }
+    Ok([r00, re01, im01, r11])
+}
+
+/// Bloch vector of one qubit: `[<X>, <Y>, <Z>]`.
+///
+/// Its length is 1 for a qubit in a pure state of its own and 0 for one
+/// maximally entangled with the rest of the register — the single number that
+/// says "this qubit has no state of its own", which no amount of looking at the
+/// state vector makes obvious.
+pub fn bloch_vector(sv: &StateVector, qubit: u32) -> Result<[f64; 3], QsimError> {
+    let [r00, re01, im01, r11] = reduced_one(sv, qubit)?;
+    Ok([2.0 * re01, -2.0 * im01, r00 - r11])
+}
+
+/// Two-qubit reduced density matrix, row-major with interleaved `(re, im)`.
+///
+/// The subsystem index is `bit_a + 2 * bit_b`, so entry `(k, l)` starts at
+/// `2 * (4 * k + l)`. Sixteen complex accumulators and one pass — the pairwise
+/// version of [`reduced_one`], and the input every correlation measure between
+/// two qubits is built from.
+///
+/// Cost is one pass per *pair*, so a caller wanting all of them pays
+/// `O(n^2 * 2^n)`. That is affordable for a register you would want to draw a
+/// link diagram of and not much beyond, which is a budgeting decision for the
+/// caller rather than something to solve here.
+pub fn reduced_two(sv: &StateVector, a: u32, b: u32) -> Result<[f64; 32], QsimError> {
+    sv.check_qubit(a)?;
+    sv.check_qubit(b)?;
+    reduced_two_of(sv.amps(), a, b)
+}
+
+/// [`reduced_two`] over a bare amplitude slice.
+///
+/// The same arithmetic without a `StateVector` to hold it, because a caller may
+/// have the amplitudes and no register — a sharded run reassembles them from its
+/// slices, and a pair straddling two shards has no slice-local form. Keeping one
+/// implementation and passing it the numbers beats a second copy that agrees
+/// only by inspection.
+pub fn reduced_two_of(amps: &[C], a: u32, b: u32) -> Result<[f64; 32], QsimError> {
+    if a == b {
+        return Err(QsimError::DuplicateQubit(a));
+    }
+    let n_qubits = amps.len().trailing_zeros();
+    for q in [a, b] {
+        if !amps.len().is_power_of_two() || q >= n_qubits {
+            return Err(QsimError::InvalidQubit { qubit: q, n_qubits });
+        }
+    }
+    let ba = 1usize << a;
+    let bb = 1usize << b;
+    let mut rho = [0.0f64; 32];
+    for (i, x) in amps.iter().enumerate() {
+        if x.re == 0.0 && x.im == 0.0 {
+            continue;
+        }
+        let k = usize::from(i & ba != 0) | (usize::from(i & bb != 0) << 1);
+        let rest = i & !ba & !bb;
+        for l in 0..4usize {
+            let j = rest | if l & 1 != 0 { ba } else { 0 } | if l & 2 != 0 { bb } else { 0 };
+            let y = amps[j];
+            let at = 2 * (k * 4 + l);
+            // rho[k][l] += psi_k * conj(psi_l)
+            rho[at] += x.re * y.re + x.im * y.im;
+            rho[at + 1] += x.im * y.re - x.re * y.im;
+        }
+    }
+    Ok(rho)
+}
+
+/// The `k` most probable basis states, largest first, as `(index, amplitude)`.
+///
+/// The point is the memory profile: `probabilities` and `amplitudes` allocate a
+/// second buffer the size of the state and are refused past
+/// [`FULL_ARRAY_QUBIT_LIMIT`], but almost everything that wants the state only
+/// wants the part of it that carries any probability. This keeps `k` entries and
+/// one pass, so it is available at any register size.
+pub fn top_amplitudes(sv: &StateVector, k: usize) -> Vec<(u64, C)> {
+    if k == 0 {
+        return Vec::new();
+    }
+    // Insertion into a short descending list. `k` is a display budget — tens,
+    // not thousands — so the shift beats a heap and keeps the result sorted
+    // without a final pass.
+    let mut out: Vec<(u64, C, f64)> = Vec::with_capacity(k + 1);
+    let mut floor = 0.0f64;
+    for (i, a) in sv.amps().iter().enumerate() {
+        let p = a.norm_sqr();
+        if p <= 0.0 || (out.len() == k && p <= floor) {
+            continue;
+        }
+        let at = out.partition_point(|e| e.2 > p);
+        out.insert(at, (i as u64, *a, p));
+        out.truncate(k);
+        floor = out[out.len() - 1].2;
+    }
+    out.into_iter().map(|(i, a, _)| (i, a)).collect()
+}
+
+/// Collapse `qubit` onto a *given* outcome, renormalising.
+///
+/// Post-selection: the same projection [`measure`] performs, with the outcome
+/// supplied instead of drawn. Separating the two matters because the draw has to
+/// happen somewhere else in two different situations — a sharded register draws
+/// once against the global marginal because no shard can see it, and a caller
+/// replaying a recorded shot already knows what came up.
+///
+/// Errors if the requested branch holds no probability: projecting onto
+/// something the state cannot produce has no answer, and returning a silently
+/// unnormalised state would be worse than saying so.
+pub fn collapse(sv: &mut StateVector, qubit: u32, outcome: u8) -> Result<(), QsimError> {
+    let p1 = probability_of_one(sv, qubit)?;
+    let p = if outcome == 1 { p1 } else { 1.0 - p1 };
+    if p <= 0.0 {
+        return Err(QsimError::ImpossibleOutcome { qubit, outcome });
+    }
+    project(sv, qubit, outcome, 1.0 / p.sqrt());
+    Ok(())
+}
+
+/// Keep one branch of `qubit`, scaled, and zero the other.
+fn project(sv: &mut StateVector, qubit: u32, outcome: u8, scale: f64) {
+    let step = 1usize << qubit;
+    for block in sv.amps_mut().chunks_exact_mut(step << 1) {
+        let (lo, hi) = block.split_at_mut(step);
+        let (kept, killed) = if outcome == 1 { (hi, lo) } else { (lo, hi) };
+        for x in kept.iter_mut() {
+            *x = x.scale(scale);
+        }
+        killed.fill(C::ZERO);
+    }
+}
+
 /// Measure `qubit`, collapse the state onto the observed outcome, renormalise.
 pub fn measure(sv: &mut StateVector, qubit: u32, rng: &mut Rng) -> Result<u8, QsimError> {
     let p1 = probability_of_one(sv, qubit)?;
@@ -79,18 +235,8 @@ pub fn measure(sv: &mut StateVector, qubit: u32, rng: &mut Rng) -> Result<u8, Qs
     if p <= 0.0 {
         return Ok(outcome);
     }
-    let scale = 1.0 / p.sqrt();
-
-    let step = 1usize << qubit;
-    for block in sv.amps_mut().chunks_exact_mut(step << 1) {
-        let (lo, hi) = block.split_at_mut(step);
-        // Keep the observed branch (rescaled); zero the one that was not seen.
-        let (kept, killed) = if outcome == 1 { (hi, lo) } else { (lo, hi) };
-        for x in kept.iter_mut() {
-            *x = x.scale(scale);
-        }
-        killed.fill(C::ZERO);
-    }
+    // Keep the observed branch (rescaled); zero the one that was not seen.
+    project(sv, qubit, outcome, 1.0 / p.sqrt());
     Ok(outcome)
 }
 

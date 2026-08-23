@@ -208,6 +208,77 @@ impl Shard {
         crate::measure::probability_of_one(&self.state, qubit)
     }
 
+    /// One-qubit reduced density matrix over this slice, for a *local* qubit.
+    ///
+    /// Every element is a sum over amplitudes, so the orchestrator recovers the
+    /// global matrix by adding the shards' contributions — no slice needs to see
+    /// any other.
+    pub fn local_reduced_one(&self, qubit: u32) -> Result<[f64; 4], QsimError> {
+        crate::measure::reduced_one(&self.state, qubit)
+    }
+
+    /// The `k` largest amplitudes in this slice, by *local* index.
+    ///
+    /// The orchestrator shifts each index by the shard id and merges the lists,
+    /// which gives the global top-k exactly: a state can only be in the global
+    /// top-k if it is in its own shard's top-k.
+    pub fn local_top_amplitudes(&self, k: usize) -> Vec<(u64, C)> {
+        crate::measure::top_amplitudes(&self.state, k)
+    }
+
+    /// Collapse a *local* qubit onto `outcome`, rescaling the kept branch.
+    ///
+    /// The outcome and the scale factor are decided by the orchestrator, not
+    /// here: the draw has to happen once for the whole register against the
+    /// global marginal, and a shard cannot see it. Splitting the decision from
+    /// the mutation is what makes a sharded measurement a measurement of one
+    /// state rather than of `K` unrelated ones.
+    pub fn collapse_local(&mut self, qubit: u32, outcome: u8, scale: f64) -> Result<(), QsimError> {
+        self.state.check_qubit(qubit)?;
+        let step = 1usize << qubit;
+        for block in self.state.amps_mut().chunks_exact_mut(step << 1) {
+            let (lo, hi) = block.split_at_mut(step);
+            let (kept, killed) = if outcome == 1 { (hi, lo) } else { (lo, hi) };
+            for x in kept.iter_mut() {
+                *x = x.scale(scale);
+            }
+            killed.fill(C::ZERO);
+        }
+        Ok(())
+    }
+
+    /// Zero the whole slice.
+    ///
+    /// A *global* qubit is a bit of the shard id, so measuring it does not
+    /// collapse anything within a slice — it decides which slices survive at
+    /// all. The ones on the unobserved side are emptied by this.
+    pub fn clear(&mut self) {
+        self.state.amps_mut().fill(C::ZERO);
+    }
+
+    /// `sum(own * conj(partner))` over one block, as `[re, im]`.
+    ///
+    /// This is the off-diagonal reduced element for a *global* qubit, whose two
+    /// branches live in different shards — the one case where a per-qubit
+    /// summary cannot be computed slice-locally. It reuses the same staging
+    /// buffer and block loop as a gate exchange, so it costs one pass over the
+    /// slice and no extra memory.
+    pub fn dot_scratch(&self, block: usize) -> Result<[f64; 2], QsimError> {
+        let span = self.block_amps();
+        let start = block * span;
+        if start >= self.state.len() {
+            return Err(QsimError::BlockOutOfRange { block, blocks: self.num_blocks() });
+        }
+        let end = (start + span).min(self.state.len());
+        let mut re = 0.0;
+        let mut im = 0.0;
+        for (a, b) in self.state.amps()[start..end].iter().zip(self.scratch.iter()) {
+            re += a.re * b.re + a.im * b.im;
+            im += a.im * b.re - a.re * b.im;
+        }
+        Ok([re, im])
+    }
+
     /// Fill the slice with pseudorandom amplitudes, returning its probability
     /// mass (the sum of squared magnitudes, before normalisation).
     ///
@@ -430,7 +501,10 @@ pub fn plan_gate(
             }
             return Ok(steps);
         }
-        Op::Unitary { controls, .. } => (&qubits[..controls], qubits[controls]),
+        Op::Unitary { .. } => {
+            let controls = op.controls_for(qubits.len());
+            (&qubits[..controls], qubits[controls])
+        }
     };
 
     let (base, base_params) = op.base().expect("Swap handled above");

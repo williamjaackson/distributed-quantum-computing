@@ -105,11 +105,18 @@ path untestable on the host.
 
 ## Gates
 
-`h x y z s sdg t tdg rx ry rz p u3 cx cy cz ch crx cry crz cp ccx ccz swap`
+`h x y z s sdg t tdg rx ry rz p u3 cx cy cz ch crx cry crz cp ccx ccz mcx mcz swap`
 
 Dispatched by name through `apply_named` / `applyGate`, with controls listed
 before the target. Any single-qubit gate can be given controls, so CNOT, CZ,
 controlled-phase and Toffoli all reuse one kernel family.
+
+`mcx` and `mcz` take their control count from the *call*: every qubit but the
+last is a control. That is not a new kernel — `apply_controlled` has always
+folded an arbitrary control slice into one mask — but a name like `ccx` carries
+its arity, and there was no name meaning "as many controls as I passed you". A
+phase flip on one state out of 2^n is a Z with n-1 controls, so without a
+variadic name an n-qubit Grover oracle simply cannot be written down.
 
 ## Build and test
 
