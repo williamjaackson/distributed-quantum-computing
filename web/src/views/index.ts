@@ -1,7 +1,9 @@
 /**
- * The view registry. One projection at a time — they are different ways of
- * looking at the same amplitudes, and side by side they compete rather than
- * combine.
+ * The view registry. One projection is open by default — they are different
+ * ways of looking at the same amplitudes, and two of them competing for the
+ * same glance is worse than one — but the stage tiles on request, because
+ * *explaining* one view often means pointing at another at the same time. See
+ * `ViewStage`.
  *
  * There is no shots view. Measurement is not another way of looking at the
  * state, it is what turns a state into an answer, so it belongs to the run

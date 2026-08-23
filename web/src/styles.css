@@ -224,16 +224,176 @@ button {
   background: var(--blue-300);
 }
 
+/* The one piece of permanent prose in the app, and it earns its place: a
+   draggable tab looks exactly like a tab. Retired the moment the stage is
+   split, because by then the reader knows. */
+.tabs-hint {
+  align-self: center;
+  margin-left: 6px;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
 /* ---------- the stage ---------- */
+
+/* One pane, or a stack of rows of them. Flex rather than a grid because the
+   dividers and the drop marker are siblings of the panes, and a template that
+   had to be rewritten as a marker appeared and vanished is a template that
+   fights the drag. */
+.stage-split {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+.stage-row {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+}
 
 .stage {
   background: var(--surface-1);
   border: 1px solid var(--border);
   border-radius: var(--radius);
   min-height: 0;
+  /* A pane's width is its flex weight, not its contents: a view that measures
+     its own container must be allowed to shrink below what it last drew. */
+  min-width: 0;
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
   overflow: hidden;
+}
+
+/* Grabbing a pane by its title reorders it. The title rather than the whole
+   pane: a view's body is full of things to click, and the circuit's columns are
+   a scrubber. */
+.stage-head[draggable='true'] {
+  cursor: grab;
+}
+
+/* How large the view draws inside the pane — a different question from how
+   large the pane is, which is what the dividers are for. */
+.pane-zoom {
+  margin-left: auto;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.pane-zoom button,
+.pane-close {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--text-muted);
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.pane-zoom-value {
+  width: auto;
+  padding: 0 5px;
+  font-family: var(--mono);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+
+.pane-zoom button:hover:not(:disabled),
+.pane-close:hover {
+  background: var(--hover-wash);
+  color: var(--text-primary);
+}
+
+.pane-zoom button:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+
+/* The grip between two panes, or between two rows. 8px of hit target, 2px of
+   ink. */
+.pane-divider,
+.row-divider {
+  flex: none;
+  position: relative;
+  touch-action: none;
+}
+
+.pane-divider {
+  width: 8px;
+  cursor: col-resize;
+}
+
+.row-divider {
+  height: 8px;
+  cursor: row-resize;
+}
+
+.pane-divider::after,
+.row-divider::after {
+  content: '';
+  position: absolute;
+  border-radius: 1px;
+  background: var(--border);
+}
+
+.pane-divider::after {
+  inset: 14px 3px;
+}
+
+.row-divider::after {
+  inset: 3px 14px;
+}
+
+.pane-divider:hover::after,
+.pane-divider:focus-visible::after,
+.row-divider:hover::after,
+.row-divider:focus-visible::after {
+  background: var(--blue);
+}
+
+/* Where the pane being dragged will land: beside a pane, or above or below the
+   whole row. */
+.pane-drop,
+.pane-drop-row {
+  flex: none;
+  border-radius: 3px;
+  background: var(--blue);
+}
+
+.pane-drop {
+  width: 6px;
+  margin: 0 1px;
+}
+
+.pane-drop-row {
+  height: 6px;
+  margin: 1px 0;
+}
+
+/* Below this two views side by side are two views too narrow to read, so every
+   row stacks too and the whole layout becomes one column. Nothing is left for a
+   divider to weigh. */
+@media (max-width: 900px) {
+  .stage-split,
+  .stage-row {
+    flex-direction: column;
+    gap: 12px;
+  }
+  .pane-divider,
+  .row-divider {
+    display: none;
+  }
 }
 
 .stage-head {
@@ -277,7 +437,11 @@ button {
   border-color: var(--blue);
 }
 
+/* The pane's scale. `zoom` rather than a transform: the view underneath still
+   measures a real box and lays itself out for it, so scaling down is more room
+   for marks rather than the same picture made small. */
 .stage-body {
+  zoom: var(--pane-zoom, 1);
   min-height: 0;
   overflow: auto;
   /* Reserve the scrollbar's width whether or not it is showing. A view sized
@@ -919,7 +1083,12 @@ svg text.mono {
   color: var(--blue);
 }
 
+/* Positioned against the viewport from a pointer's own coordinates, so a scaled
+   pane would place it at the scaled position. Undoing the pane's zoom cancels
+   both that and the type size; outside a pane the variable is unset and this is
+   `zoom: 1`. */
 .tip {
+  zoom: calc(1 / var(--pane-zoom, 1));
   position: fixed;
   pointer-events: none;
   z-index: 20;

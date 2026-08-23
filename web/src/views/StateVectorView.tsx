@@ -36,7 +36,7 @@ export function StateVectorView({ analysis }: ViewProps) {
   const { bind, node } = useTip();
   const { support, supportTruncated, nQubits, likeliest, amplitudeCount: count } = analysis;
 
-  const plotW = Math.max(180, width - MARGIN.left - MARGIN.right);
+  const plotW = Math.max(150, width - MARGIN.left - MARGIN.right);
   const maxP = support.length > 0 ? support[0].prob : 0;
   const domain = STOPS.find((s) => maxP <= s + 1e-9) ?? 1;
   const slot = plotW / count;
