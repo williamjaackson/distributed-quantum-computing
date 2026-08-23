@@ -206,6 +206,7 @@ export function App() {
       likeliest: analysis.likeliest,
       shots: timeline.shots,
       measurement: timeline.measurement,
+      bestShot: timeline.bestShot,
       entropyBits: analysis.entropyBits,
       readRegister: (qubits) => readRegister(analysis, qubits),
     };

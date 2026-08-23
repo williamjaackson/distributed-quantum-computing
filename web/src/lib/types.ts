@@ -141,6 +141,14 @@ export interface ReadoutContext {
   shots: ShotOutcome[];
   /** How the shots were obtained, and how many there really are. */
   measurement: Measurement;
+  /**
+   * The best-scoring shot, when the program scores outcomes.
+   *
+   * Programs that rank their shots should read their answer from here rather
+   * than ranking again, so the panel and the Best shot button cannot disagree
+   * about which outcome won.
+   */
+  bestShot: { index: number; score: number; count: number; rank: number } | null;
   /** Shannon entropy of the distribution in bits, when it could be computed. */
   entropyBits: number | null;
   /** Reads a set of qubits as a little-endian integer, from the joint distribution. */
