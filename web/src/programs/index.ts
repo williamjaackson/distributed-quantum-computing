@@ -18,6 +18,7 @@ import { deutschJozsa } from './deutschJozsa';
 import { grover } from './grover';
 import { qft } from './qft';
 import { adder } from './adder';
+import { qaoa } from './qaoa';
 
 export const PROGRAMS: Program[] = [
   coin,
@@ -29,6 +30,7 @@ export const PROGRAMS: Program[] = [
   grover,
   qft,
   adder,
+  qaoa,
 ];
 
 export function programById(id: string): Program {

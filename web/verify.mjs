@@ -14,7 +14,7 @@ import { dirname, join } from 'node:path';
 // Through the package name, not the path: the app's own modules import 'qsim',
 // and two specifiers that reach the same file still have to be the same module
 // instance or only one of them ends up initialised.
-import { initSync, Simulator, gateNames } from 'qsim';
+import { initSync, Simulator, gateNames, qaoaPlan } from 'qsim';
 import { PROGRAMS } from './src/programs/index.ts';
 import { defaultValues } from './src/lib/inputs.ts';
 import { GATE_CONTROLS, GATE_PARAMS, gateArity } from './src/lib/steps.ts';
@@ -247,6 +247,161 @@ const byId = (id) => PROGRAMS.find((p) => p.id === id);
   );
 }
 
+// QAOA: the program must be a *driver* for the engine's circuit, not a second
+// copy of it. tests/qaoa_plan.rs already proves the plan matches run_qaoa; what
+// is left to check here is that nothing is added, removed or reordered on the
+// way through the program and across the WASM boundary.
+{
+  const program = byId('qaoa');
+  const values = defaultValues(program.inputs);
+  const names = gateNames();
+
+  // The plan, asked for directly, with the config the program's defaults imply.
+  const WATTS = [1, 1, 1, 1, 1, 2, 4, 3, 1, 2, 4, 6];
+  const planFor = (gamma, beta, lambda, penalties) => {
+    const qubits = [];
+    const offsets = [0];
+    for (const p of penalties) {
+      qubits.push(...p.qubits);
+      offsets.push(qubits.length);
+    }
+    const flat = qaoaPlan(
+      new Float64Array(WATTS), 20, gamma, beta, lambda,
+      new Uint32Array(qubits), new Uint32Array(offsets),
+      new Float64Array(penalties.map((p) => p.target)),
+      new Float64Array(penalties.map((p) => p.multiplier)),
+    );
+    const out = [];
+    let at = 0;
+    const next = () => flat[at++];
+    const count = next();
+    for (let g = 0; g < count; g++) {
+      const name = names[next()];
+      next(); next();
+      const qs = Array.from({ length: next() }, () => next());
+      const ps = Array.from({ length: next() }, () => next());
+      out.push(`${name}(${qs.join(',')})[${ps.map((v) => v.toFixed(12)).join(',')}]`);
+    }
+    return out;
+  };
+
+  const configured = [
+    { qubits: [4, 5, 6, 7], target: 10, multiplier: 5 },
+    { qubits: [8, 9, 10, 11], target: 13, multiplier: 5 },
+  ];
+  const { steps } = run(program, values);
+  const asRun = steps.map(
+    (s) => `${s.name}(${s.qubits.join(',')})[${s.params.map((v) => v.toFixed(12)).join(',')}]`,
+  );
+  const asPlanned = planFor(values.gamma, values.beta, values.lambda, configured);
+  check(
+    'qaoa: the program yields exactly the engine\'s planned circuit',
+    asRun.length === asPlanned.length && asRun.every((g, i) => g === asPlanned[i]),
+    `${asRun.length} steps vs ${asPlanned.length} planned` +
+      (asRun.length === asPlanned.length
+        ? ''
+        : `; first difference at ${asRun.findIndex((g, i) => g !== asPlanned[i])}`),
+  );
+  check(
+    'qaoa: one round of the power grid is 278 gates',
+    asRun.length === 278,
+    `${asRun.length}`,
+  );
+
+  // Changing which consumers get a demand term must change the circuit, by the
+  // right number of gates: three per pair plus one diagonal per qubit.
+  const block = (k) => 3 * ((k * (k - 1)) / 2) + k;
+  const budget = block(12);
+  for (const [choice, expected] of [
+    ['configured', 12 + budget + block(4) * 2 + 12],
+    ['all', 12 + budget + block(2) * 2 + block(4) * 2 + 12],
+    ['none', 12 + budget + 12],
+  ]) {
+    const { steps: s } = run(program, { ...values, penalties: choice });
+    check(`qaoa: '${choice}' demand terms give ${expected} gates`, s.length === expected, `${s.length}`);
+  }
+
+  // The objective, and the optimum optimization_problem.rs pins independently.
+  const GROUPS = [[0, 1], [2, 3], [4, 5, 6, 7], [8, 9, 10, 11]];
+  const DEMAND = [2, 2, 10, 13];
+  const WEIGHT = [3, 3, 5, 5];
+  const objective = (x) => {
+    const a = GROUPS.map((g) => g.reduce((t, q) => t + ((x >> q) & 1) * WATTS[q], 0));
+    if (a.reduce((t, v) => t + v, 0) > 20) return Infinity;
+    return GROUPS.reduce((t, _, i) => t + (WEIGHT[i] * Math.max(0, DEMAND[i] - a[i])) / DEMAND[i], 0);
+  };
+  let bestCost = Infinity;
+  let optimal = [];
+  for (let x = 0; x < 4096; x++) {
+    const c = objective(x);
+    if (c < bestCost - 1e-12) { bestCost = c; optimal = [x]; }
+    else if (Math.abs(c - bestCost) < 1e-12) optimal.push(x);
+  }
+  check(
+    'qaoa: the optimum is the allocation the engine tests expect',
+    Math.abs(bestCost - 2.692308) < 1e-6 && optimal.length === 2,
+    `unmet demand ${bestCost.toFixed(6)} at ${optimal.length} states`,
+  );
+
+  // What the circuit does with it, at the angles qaoa.rs ships and at better
+  // ones. Both are claims the program makes in its own panel.
+  const before = optimal.length / 4096;
+  const measure = (over) => {
+    const { probs } = run(program, { ...values, ...over });
+    return {
+      amplification: optimal.reduce((t, x) => t + probs[x], 0) / before,
+      probs,
+    };
+  };
+  const shipped = measure({});
+  check(
+    'qaoa: the shipped angles amplify the optimum at all',
+    shipped.amplification > 2,
+    `${shipped.amplification.toFixed(2)}x at the default γ=${values.gamma}, β=${values.beta}`,
+  );
+  const tuned = measure({ gamma: 0.04, beta: 0.68 });
+  check(
+    'qaoa: a better setting is reachable on the sliders',
+    tuned.amplification > 20 && tuned.amplification > shipped.amplification * 5,
+    `${tuned.amplification.toFixed(1)}x at γ=0.04, β=0.68 against ${shipped.amplification.toFixed(2)}x shipped`,
+  );
+
+  // The answer is the cheapest allocation among the shots, which is a different
+  // and better thing than the likeliest outcome. At the shipped angles the
+  // likeliest outcome is a poor allocation, so a readout that reported it would
+  // be confidently wrong — this is the check that would have caught that.
+  const bestSampled = (probs, shots) => {
+    // Draw deterministically from the distribution, the way the sampler does:
+    // take the states in order of probability until the shots run out.
+    const ranked = [...probs.keys()].sort((a, b) => probs[b] - probs[a]);
+    let left = shots;
+    let best = Infinity;
+    for (const x of ranked) {
+      if (left <= 0) break;
+      const expected = probs[x] * shots;
+      if (expected < 0.5) break;
+      left -= expected;
+      best = Math.min(best, objective(x));
+    }
+    return best;
+  };
+  const likeliest = (probs) => {
+    let peak = 0;
+    probs.forEach((p, i) => { if (p > probs[peak]) peak = i; });
+    return objective(peak);
+  };
+  check(
+    'qaoa: the likeliest outcome is a much worse answer than the shots give',
+    likeliest(shipped.probs) > bestSampled(shipped.probs, 1024) + 1,
+    `likeliest leaves ${likeliest(shipped.probs).toFixed(4)} unmet, best of ~1024 shots leaves ` +
+      `${bestSampled(shipped.probs, 1024).toFixed(4)}, optimum is ${bestCost.toFixed(4)}`,
+  );
+  check(
+    'qaoa: enough shots reach the optimum at the shipped angles',
+    bestSampled(shipped.probs, 65536) <= bestCost + 1e-9,
+    `best of ~65536 shots leaves ${bestSampled(shipped.probs, 65536).toFixed(4)}`,
+  );
+}
 
 console.log(failures ? `\n${failures} check(s) failed` : '\nall checks passed');
 process.exit(failures ? 1 : 0);

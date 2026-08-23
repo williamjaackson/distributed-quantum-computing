@@ -177,6 +177,7 @@ states its own default and most want the floor. A sampling optimiser
 whose best outcome carries one part in a thousand of the distribution will miss
 it half the time at a thousand shots and report a worse one with a straight
 face; that is a budget, not a bug, and the program is what knows the difference.
+QAOA is that program, and asks for 65,536 — see below.
 
 Readouts describe the end of the *circuit* — not the playhead, and not the end
 of the timeline. An answer that changes as you scrub is not an answer; and a
@@ -188,6 +189,75 @@ reports how many shots found the marked state, the adder whether all of them
 read the same sum, Deutsch–Jozsa's verdict is what the shots said. The
 difference is not pedantic: for QAOA the likeliest outcome is a *bad*
 allocation, and reporting it was a wrong answer stated confidently.
+## QAOA
+
+The program that justifies the rest of it, and the one place the visualiser
+deliberately owns no physics at all.
+
+`engine/src/qaoa.rs` builds the QAOA circuit for a `QaoaConfig` and hands back a
+sampled histogram — the right shape for "what does this problem sample to", the
+wrong shape for watching it happen. So `engine/src/qaoa_plan.rs` returns the
+same gates as *data*, tagged with which part of the circuit they belong to, and
+`tests/qaoa_plan.rs` requires the two to produce the same state to 1e-13 across
+48 combinations of γ, β and λ and four problem shapes. `web/src/programs/qaoa.ts`
+then does nothing but turn the panel's inputs into a config, ask for the plan,
+and label the stages. `verify.mjs` checks that the program's step list is
+gate-for-gate and angle-for-angle the plan the engine returned.
+
+That indirection is the point. A visualiser with its own copy of the
+construction shows you a circuit that *resembles* the one the engine runs, and
+the resemblance is exactly what you cannot check by looking.
+
+The problem and the objective do live here, because `qaoa.rs` deliberately keeps
+both out: the weights, the groupings, and what makes one allocation better than
+another are not generic. 20 W of supply, four consumers wanting 27 W between
+them, twelve switchable supplies, so one bit string is one allocation and the
+register holds all 4096 at once. Exhaustive search says the best reachable
+allocation leaves 2.692308 of weighted demand unmet, which
+`tests/optimization_problem.rs` pins down independently.
+
+Watch it with the state-vector view open. The cost layer writes each
+allocation's shortfall into its *phase* and the bars do not move at all — the
+step that makes people think nothing happened. The mixer turns those phases into
+interference. At the angles `qaoa.rs` ships (γ = 0.1, β = 0.5) the optimum comes
+out **2.5× more likely** than an even draw; drag γ down to about 0.04 and it is
+**33×**. One round of QAOA is powerful and brittle at the same time, and a
+slider says that better than a paragraph.
+
+Pressing **Measure** here is instructive precisely because it disappoints: a
+draw scores around 9.4 against an optimum of 2.69, because the optimum holds
+0.1% of the probability and one sample is one sample. **Best shot** collapses
+onto the one that won — ranked around 400th by frequency, drawn once in a
+thousand. That gap is the whole character of the algorithm.
+
+The panel says it in the shape every program uses: the answer is the best
+allocation the shots found, `expected` is the optimum from exhaustive search, and
+the ✓ says whether this run got there.
+
+It asks for 65,536 shots. The optimum carries about one part in a thousand of
+the distribution at the shipped angles, which is why an earlier version of this
+app — sampling a thousand — landed on it only about half the time and spent the
+other half reporting a worse allocation as though it were the answer. The 8,192
+floor already fixes that on its own: six runs at the floor found the optimum
+every time, with 5 to 12 hits. 65,536 is asked for so the confidence figure is
+seventy-odd hits rather than five, because "5 of 8,192" reads as luck even when
+it isn't.
+
+The answer is the cheapest allocation **among the shots**, which is how
+`tests/qaoa_module.rs` defines it and not the same thing as the likeliest
+outcome. At the shipped angles the likeliest outcome leaves 10.92 of demand
+unmet against an optimum of 2.69 — reporting it, as an earlier version of this
+program did, is a wrong answer stated confidently next to the right one. So the
+panel says which allocation the shots found, how many of them found it (one in a
+thousand at the shipped angles, seventeen at γ = 0.04), and what fraction stayed
+within budget at all: about 90%, because the budget is a phase penalty rather
+than a constraint and can simply be broken.
+
+Two modelling choices are exposed rather than buried. `qaoa.rs`'s example gives
+demand terms to the hospital and the factory only, so the two homes are scored
+by the objective but never appear in the phases — "Demand terms" switches
+between that, every consumer, and none. And every pair term is a
+CNOT · RZ · CNOT, which is why one twelve-qubit round is 278 gates.
 
 ## Register size
 
@@ -269,6 +339,9 @@ there is nothing to click:
 - Deutsch–Jozsa returns the right verdict for each oracle, in one query
 - the adder is correct over all sixteen input pairs, with certainty
 - Grover's marked state is the peak, past 94%
+- the QAOA program's step list is gate-for-gate the plan the engine returned,
+  and its shipped angles amplify the optimum while a better setting is on the
+  sliders
 
 Node strips the types from the imported `.ts` sources; `tsresolve.mjs` fills in
 the extensions its resolver wants and Vite's does not, so the app source stays
