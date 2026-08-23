@@ -71,6 +71,15 @@ data-viz reference set, validated all-pairs on the light surface.
 
 ## Measurement
 
+Playing stops at the end of the *circuit*, where most of these programs leave
+the interesting thing in a superposition. The transport's primary button then
+offers to **measure**, and pressing it reads every qubit out in turn so the
+collapse is something you watch rather than a jump — a Bell pair's second qubit
+snaps the moment the first is looked at, without a gate touching it. It is a
+separate button because looking is a separate act from computing, and a
+destructive one. A program that already measured everything itself is not
+offered it: there is nothing left to decide.
+
 A state vector is not a result. The amplitudes are not something any experiment
 can read, and the answer to "what does this program compute" is what comes back
 when you measure it, repeatedly. So measurement is not one of the views: it is

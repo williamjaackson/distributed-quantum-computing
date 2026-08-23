@@ -13,12 +13,17 @@ interface Props {
   readouts: Readout[];
   bits: Record<string, number>;
   norm: number;
+  /** The basis state the run collapsed to, once it has been read out. */
+  collapsed: { index: number; ket: string } | null;
+  /** Bit names the readout created — folded into `collapsed` rather than listed. */
+  hideBits: string[];
 }
 
-export function OutputsPanel({ readouts, bits, norm }: Props) {
+export function OutputsPanel({ readouts, bits, norm, collapsed, hideBits }: Props) {
   const hero = readouts.find((r) => r.hero);
   const rest = readouts.filter((r) => r !== hero);
-  const bitNames = Object.keys(bits);
+  const hidden = new Set(hideBits);
+  const bitNames = Object.keys(bits).filter((b) => !hidden.has(b));
 
   return (
     <div>
@@ -39,6 +44,16 @@ export function OutputsPanel({ readouts, bits, norm }: Props) {
           {r.hint && <span className="out-hint">{r.hint}</span>}
         </div>
       ))}
+
+      {collapsed && (
+        <div className="out-row">
+          <span className="out-label">Collapsed to</span>
+          <span className="out-value">{collapsed.ket}</span>
+          <span className="out-hint">
+            one draw — the register is definite now, and looking again would give the same answer
+          </span>
+        </div>
+      )}
 
       <div className="out-row">
         <span className="out-label">Classical bits</span>

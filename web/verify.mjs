@@ -28,8 +28,14 @@ const check = (name, ok, detail = '') => {
   if (!ok) failures++;
 };
 
-/** Run a program's steps through the engine and return the final state. */
-function run(program, values, seed = 0x5eed) {
+/**
+ * Run a program's steps through the engine and return the final state.
+ *
+ * `readOut` measures every qubit afterwards, which is what the visualiser's
+ * Measure button appends: the collapse has to leave the register on exactly one
+ * basis state, and it has to be one the circuit gave some probability to.
+ */
+function run(program, values, seed = 0x5eed, readOut = false) {
   const n = program.qubits(values);
   const sim = new Simulator(n);
   sim.setSeed(seed);
@@ -42,7 +48,13 @@ function run(program, values, seed = 0x5eed) {
     else sim.applyGate(step.name, new Uint32Array(step.qubits), new Float64Array(step.params));
   }
   const probs = n <= 22 ? sim.probabilities() : null;
-  const out = { n, steps, bits, norm: sim.norm(), probs };
+  let readout = null;
+  if (readOut) {
+    readout = 0;
+    for (let q = 0; q < n; q++) readout |= sim.measure(q) << q;
+  }
+  const collapsed = readOut && n <= 22 ? sim.probabilities() : null;
+  const out = { n, steps, bits, norm: sim.norm(), probs, readout, collapsed };
   sim.free();
   return out;
 }
@@ -86,6 +98,32 @@ for (const program of PROGRAMS) {
     problems.slice(0, 3).join('; '),
   );
   check(`${program.id}: norm survives the run`, Math.abs(norm - 1) < 1e-12, norm.toFixed(15));
+}
+
+// ---------------------------------------------------------------------------
+// Reading the register out
+//
+// What the Measure button appends. A readout has to leave the register on
+// exactly one basis state, that state has to be one the circuit actually gave
+// probability to, and the norm has to survive the collapse — which is the
+// renormalisation working.
+// ---------------------------------------------------------------------------
+
+for (const program of PROGRAMS) {
+  const values = defaultValues(program.inputs);
+  const { n, readout, collapsed, probs, norm } = run(program, values, 0x5eed, true);
+  if (n > 22) continue;
+  const occupied = collapsed.filter((p) => p > 1e-12).length;
+  check(
+    `${program.id}: reading every qubit out leaves one definite state`,
+    occupied === 1 && Math.abs(collapsed[readout] - 1) < 1e-12,
+    `|${readout.toString(2).padStart(n, '0')}> at ${collapsed[readout]}, ${occupied} state(s) occupied`,
+  );
+  check(
+    `${program.id}: the collapse landed somewhere the circuit allowed`,
+    probs[readout] > 1e-12 && Math.abs(norm - 1) < 1e-12,
+    `it had probability ${(probs[readout] * 100).toFixed(3)}% beforehand`,
+  );
 }
 
 // ---------------------------------------------------------------------------

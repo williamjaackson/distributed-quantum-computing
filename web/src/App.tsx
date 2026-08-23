@@ -14,6 +14,7 @@ import type { Execution } from './lib/backend';
 import { engineLimitsIfReady, loadWasm } from './lib/backend';
 import { ceiling, runProgram } from './lib/runner';
 import { defaultValues } from './lib/inputs';
+import { ket } from './lib/format';
 import type { InputValue, InputValues, Readout, ReadoutContext, Timeline } from './lib/types';
 import { usePlayer } from './lib/usePlayer';
 import { PROGRAMS, programById } from './programs';
@@ -32,6 +33,7 @@ export function App() {
   const [viewId, setViewId] = useState('qubits');
   const [shots, setShots] = useState(1024);
   const [shotIndex, setShotIndex] = useState(0);
+  const [measureAtEnd, setMeasureAtEnd] = useState(false);
   const [execution, setExecution] = useState<Execution>('auto');
   const [unlocked, setUnlocked] = useState(false);
   const [timeline, setTimeline] = useState<Timeline | null>(null);
@@ -82,6 +84,7 @@ export function App() {
       unlocked,
       shots,
       shotIndex,
+      measureAtEnd,
       onProgress: (done: number) => {
         if (generation.current === mine) setProgress(done);
       },
@@ -94,9 +97,26 @@ export function App() {
     return () => {
       abandoned = true;
     };
-  }, [ready, program, values, shots, shotIndex, execution, unlocked]);
+  }, [ready, program, values, shots, shotIndex, measureAtEnd, execution, unlocked]);
 
   const player = usePlayer(timeline?.frames.length ?? 1);
+
+  // Asking to measure re-runs with a readout appended. The collapse is meant to
+  // be watched, so playback resumes from where the circuit ended rather than
+  // letting the sticky-end jump straight past it.
+  const resumeFrom = useRef<number | null>(null);
+  const requestMeasure = useCallback(() => {
+    if (!timeline || measureAtEnd) return;
+    resumeFrom.current = timeline.circuitSteps;
+    setMeasureAtEnd(true);
+  }, [timeline, measureAtEnd]);
+  useEffect(() => {
+    if (timeline && resumeFrom.current !== null && timeline.readout !== null) {
+      player.play(resumeFrom.current);
+      resumeFrom.current = null;
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [timeline]);
 
   // A new program starts at the beginning; changing an input on the program you
   // are already watching does not, so a slider can be dragged mid-circuit.
@@ -104,36 +124,9 @@ export function App() {
   useEffect(() => {
     resetPlayhead();
     setShotIndex(0);
+    setMeasureAtEnd(false);
   }, [programId, resetPlayhead]);
 
-  useEffect(() => {
-    function onKey(e: KeyboardEvent) {
-      const target = e.target as HTMLElement | null;
-      if (target && /^(INPUT|SELECT|TEXTAREA)$/.test(target.tagName)) return;
-      switch (e.key) {
-        case ' ':
-          e.preventDefault();
-          player.toggle();
-          break;
-        case 'ArrowRight':
-          e.preventDefault();
-          player.step(1);
-          break;
-        case 'ArrowLeft':
-          e.preventDefault();
-          player.step(-1);
-          break;
-        case 'Home':
-          player.toStart();
-          break;
-        case 'End':
-          player.toEnd();
-          break;
-      }
-    }
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [player]);
 
   const frameIndex = timeline ? Math.min(player.index, timeline.frames.length - 1) : 0;
   const frame = timeline?.frames[frameIndex] ?? null;
@@ -153,6 +146,41 @@ export function App() {
         : null,
     [timeline, finalFrame],
   );
+
+  // Nothing to offer if the circuit already ends somewhere definite: a program
+  // that measured everything itself has nothing left to collapse, and a readout
+  // would be a run of steps in which nothing moves.
+  const canMeasure = !!timeline && !measureAtEnd && (finalAnalysis?.support.length ?? 2) > 1;
+
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      const target = e.target as HTMLElement | null;
+      if (target && /^(INPUT|SELECT|TEXTAREA)$/.test(target.tagName)) return;
+      switch (e.key) {
+        case ' ':
+          e.preventDefault();
+          if (player.atEnd && !player.playing && canMeasure) requestMeasure();
+          else player.toggle();
+          break;
+        case 'ArrowRight':
+          e.preventDefault();
+          player.step(1);
+          break;
+        case 'ArrowLeft':
+          e.preventDefault();
+          player.step(-1);
+          break;
+        case 'Home':
+          player.toStart();
+          break;
+        case 'End':
+          player.toEnd();
+          break;
+      }
+    }
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [player, canMeasure, requestMeasure]);
 
   const readouts: Readout[] = useMemo(() => {
     if (!timeline || !finalAnalysis || !finalFrame || !program.outputs) return [];
@@ -350,6 +378,7 @@ export function App() {
             onStart={player.toStart}
             onEnd={player.toEnd}
             onSpeed={player.setSpeed}
+            onMeasure={canMeasure ? requestMeasure : undefined}
           />
         </main>
 
@@ -357,7 +386,17 @@ export function App() {
           <section className="card" id="outputs">
             <h2 className="card-title">Outputs</h2>
             {timeline && frame ? (
-              <OutputsPanel readouts={readouts} bits={finalFrame?.bits ?? {}} norm={frame.norm} />
+              <OutputsPanel
+                readouts={readouts}
+                bits={finalFrame?.bits ?? {}}
+                norm={frame.norm}
+                collapsed={
+                  timeline.readout === null
+                    ? null
+                    : { index: timeline.readout, ket: ket(timeline.readout, timeline.nQubits) }
+                }
+                hideBits={timeline.readoutBits}
+              />
             ) : (
               <p className="field-hint">starting the engine…</p>
             )}

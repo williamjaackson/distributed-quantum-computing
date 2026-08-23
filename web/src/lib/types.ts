@@ -253,6 +253,17 @@ export interface Timeline {
   /** Measurement outcomes over the whole run, largest count first. */
   shots: ShotOutcome[];
   measurement: Measurement;
+  /**
+   * Steps belonging to the circuit itself, before any final readout.
+   *
+   * Playing stops here. A readout is not part of the algorithm — it is the act
+   * of looking, and it is destructive, so it happens when asked for.
+   */
+  circuitSteps: number;
+  /** The basis state this run collapsed to, once it has been read out. */
+  readout: number | null;
+  /** Classical bit names the readout created, so the panel can fold them up. */
+  readoutBits: string[];
   /** Wall-clock milliseconds the engine spent executing the whole program. */
   elapsedMs: number;
   /** Set when the program stopped early — the timeline holds what ran. */

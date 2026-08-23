@@ -69,6 +69,11 @@ export function usePlayer(length: number) {
     setIndex(lastRef.current);
   }, []);
 
+  const play = useCallback((from?: number) => {
+    if (from !== undefined) setIndex(Math.max(0, Math.min(lastRef.current, from)));
+    setPlaying(true);
+  }, []);
+
   const toggle = useCallback(() => {
     setPlaying((p) => {
       // Pressing play at the end restarts, rather than doing nothing.
@@ -92,6 +97,7 @@ export function usePlayer(length: number) {
     step,
     toStart,
     toEnd,
+    play,
     toggle,
     reset,
     atStart: index === 0,

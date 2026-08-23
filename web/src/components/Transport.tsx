@@ -4,6 +4,11 @@
  * The step description and the literal `applyGate(...)` call sit directly above
  * the buttons rather than off in a log: the whole point of stepping is to tie a
  * change on screen to the one call that caused it.
+ *
+ * Playing stops at the end of the circuit, where most of these programs leave
+ * the interesting thing in a superposition. The primary button then offers to
+ * *measure*, because looking is a separate act from computing and a destructive
+ * one — so it is asked for rather than assumed.
  */
 import { SPEEDS } from '../lib/usePlayer';
 import { describe, engineCall } from '../lib/format';
@@ -24,6 +29,8 @@ interface TransportProps {
   onStart: () => void;
   onEnd: () => void;
   onSpeed: (s: number) => void;
+  /** Offered when the circuit has finished and nothing has read it out yet. */
+  onMeasure?: () => void;
 }
 
 export function Transport(props: TransportProps) {
@@ -50,14 +57,25 @@ export function Transport(props: TransportProps) {
         <button className="btn" onClick={() => props.onStep(-1)} disabled={atStart} title="Back (←)">
           <Icon shape="prev" />
         </button>
-        <button
-          className="btn btn-primary"
-          onClick={props.onToggle}
-          disabled={last === 0}
-          title="Play / pause (space)"
-        >
-          <Icon shape={playing ? 'pause' : 'play'} />
-        </button>
+        {props.onMeasure && atEnd && !playing ? (
+          <button
+            className="btn btn-measure"
+            onClick={props.onMeasure}
+            title="Measure the register (space) — this collapses it"
+          >
+            <Icon shape="measure" />
+            Measure
+          </button>
+        ) : (
+          <button
+            className="btn btn-primary"
+            onClick={props.onToggle}
+            disabled={last === 0}
+            title="Play / pause (space)"
+          >
+            <Icon shape={playing ? 'pause' : 'play'} />
+          </button>
+        )}
         <button className="btn" onClick={() => props.onStep(1)} disabled={atEnd} title="Forward (→)">
           <Icon shape="next" />
         </button>
@@ -97,7 +115,7 @@ export function Transport(props: TransportProps) {
   );
 }
 
-type Shape = 'start' | 'prev' | 'play' | 'pause' | 'next' | 'end';
+type Shape = 'start' | 'prev' | 'play' | 'pause' | 'next' | 'end' | 'measure';
 
 function Icon({ shape }: { shape: Shape }) {
   const common = { width: 14, height: 14, viewBox: '0 0 14 14', fill: 'currentColor' } as const;
@@ -136,6 +154,15 @@ function Icon({ shape }: { shape: Shape }) {
       return (
         <svg {...common} aria-hidden>
           <path d="M10.4 2H12v10h-1.6zM2 2v10l7.2-5z" />
+        </svg>
+      );
+    case 'measure':
+      // The meter glyph the circuit diagram uses for a measurement, so the
+      // button and the step it adds look like the same thing.
+      return (
+        <svg {...common} fill="none" stroke="currentColor" strokeWidth={1.6} aria-hidden>
+          <path d="M2.2 10.5a4.8 4.8 0 0 1 9.6 0" />
+          <path d="M7 10.5 10.2 4.8" />
         </svg>
       );
   }

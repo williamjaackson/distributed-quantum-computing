@@ -161,6 +161,15 @@ export interface RunOptions {
   shots: number;
   /** Which shot the recorded frames should be. */
   shotIndex: number;
+  /**
+   * Read every qubit out at the end, collapsing the register.
+   *
+   * Off by default, because a readout is not part of an algorithm: it is the act
+   * of looking, it destroys the superposition, and most of these programs end
+   * with the interesting thing still in one. So it is something you ask for,
+   * after the circuit has finished.
+   */
+  measureAtEnd: boolean;
   /** Called as steps complete, so a long run can show progress. */
   onProgress?: (done: number) => void;
   /** Checked between steps; a true return abandons the run. */
@@ -179,7 +188,7 @@ export async function runProgram(
   values: InputValues,
   options: RunOptions,
 ): Promise<Timeline> {
-  const { execution, unlocked, shots, shotIndex, onProgress, cancelled } = options;
+  const { execution, unlocked, shots, shotIndex, measureAtEnd, onProgress, cancelled } = options;
   // Every limit below comes from the engine, so the module has to be up first.
   await loadWasm();
   const limits = engineLimits();
@@ -236,16 +245,66 @@ export async function runProgram(
   }
   // The answer. A state vector is not a result: what a program produces is what
   // comes back when you measure it, so every run is measured.
+  //
+  // Taken here, at the end of the *circuit*, before any readout is appended —
+  // and not as an optimisation. Reading every qubit out at the end is precisely
+  // what sampling the final state models, so appending one cannot change the
+  // distribution; sampling after it would collapse the answer to one draw.
+  const circuitSteps = steps.length;
   let outcomes: ShotOutcome[] = [];
   let measurement: Measurement = { requested: shots, taken: 0, method: 'sampled' };
+  const collapses = steps.filter((s) => s.kind === 'measure').length;
   if (backend && !error) {
     try {
-      const collapses = steps.filter((s) => s.kind === 'measure').length;
-      const result = collapses === 0
-        ? await sampleOnce(backend, shots)
-        : await repeatRun(backend, program, values, steps.length, nQubits, shots, cancelled);
+      const result =
+        collapses === 0
+          ? await sampleOnce(backend, shots)
+          : await repeatRun(backend, program, values, steps.length, nQubits, shots, cancelled);
       outcomes = result.outcomes;
       measurement = result.measurement;
+    } catch (e) {
+      error = e instanceof Error ? e.message : String(e);
+    }
+  }
+
+  // The readout, if asked for: every qubit in turn, so the collapse is something
+  // you watch rather than a single jump. A qubit already definite does not move,
+  // and an entangled partner moves without being touched.
+  let readout: number | null = null;
+  const readoutBits: string[] = [];
+  if (backend && !error && measureAtEnd) {
+    try {
+      // `repeatRun` reset the register to take its shots, so put the trajectory
+      // back. The same seed reproduces the run the frames recorded.
+      if (collapses > 0) {
+        await backend.reset(seedFor(shotIndex));
+        const replay: Record<string, number> = {};
+        const cl2: Classical = {
+          get: (b) => replay[b],
+          bit: (b) => replay[b] ?? 0,
+          all: () => ({ ...replay }),
+        };
+        for (const step of program.build(values, cl2)) {
+          if (step.kind === 'measure') replay[step.bit] = await backend.measure(step.qubit);
+          else await backend.applyGate(step.name, step.qubits, step.params);
+        }
+      }
+      readout = 0;
+      for (let q = 0; q < nQubits; q++) {
+        const bit = `r${q}`;
+        readoutBits.push(bit);
+        const step: Step = {
+          kind: 'measure',
+          qubit: q,
+          bit,
+          stage: 'Readout',
+          note: `Look at qubit ${q} — it has to decide`,
+        };
+        bits[bit] = await backend.measure(q);
+        readout |= bits[bit] << q;
+        steps.push(step);
+        frames.push(await snapshot(backend, steps.length, bits, want));
+      }
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
     }
@@ -290,6 +349,9 @@ export async function runProgram(
     // matrix, so it returns no links however affordable the budget said they were.
     shots: outcomes,
     measurement,
+    circuitSteps,
+    readout,
+    readoutBits,
     detail: {
       amps: frames[0].amps !== null,
       links: frames[0].links !== null,

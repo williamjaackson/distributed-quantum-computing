@@ -373,6 +373,22 @@ button {
   color: #fff;
 }
 
+/* Measurement is the other actor in this app and wears the other series colour
+   everywhere — the meter in the circuit, the ring on a touched qubit, and this. */
+.btn-measure {
+  background: var(--orange);
+  border-color: var(--orange);
+  color: #fff;
+  padding: 0 12px;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.btn-measure:hover {
+  background: #d95926;
+  color: #fff;
+}
+
 .btn svg {
   display: block;
 }
