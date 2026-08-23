@@ -80,7 +80,9 @@ separate button because looking is a separate act from computing, and a
 destructive one. A program that already measured everything itself is not
 offered it: there is nothing left to decide.
 
-Pressing it gives you **one draw**, which is what a machine gives you, and the
+Pressing it gives you **one draw**, which is what a machine gives you, and
+pressing it again gives you a *different* one — on a Bell pair, six presses gave
+\|11⟩ \|00⟩ \|11⟩ \|11⟩ \|00⟩ \|00⟩, always agreeing and never predictable. The
 panel says what that draw scored next to what the best of your shots scored —
 because one sample from a distribution where the answer has 0.1% of the
 probability is almost always a poor one, and a collapsed register is the most

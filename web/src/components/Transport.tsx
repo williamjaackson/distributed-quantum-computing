@@ -33,6 +33,8 @@ interface TransportProps {
   onMeasure?: () => void;
   /** Offered alongside it when the program can say which shot was best. */
   onBestShot?: () => void;
+  /** A draw has already been taken, so the offer is another one. */
+  measured?: boolean;
 }
 
 export function Transport(props: TransportProps) {
@@ -64,10 +66,14 @@ export function Transport(props: TransportProps) {
             <button
               className="btn btn-measure"
               onClick={props.onMeasure}
-              title="Measure the register (space) — one draw, and it collapses"
+              title={
+                props.measured
+                  ? 'Measure again — a different run, and a different draw'
+                  : 'Measure the register (space) — one draw, and it collapses'
+              }
             >
               <Icon shape="measure" />
-              Measure
+              {props.measured ? 'Measure again' : 'Measure'}
             </button>
             {props.onBestShot && (
               <button

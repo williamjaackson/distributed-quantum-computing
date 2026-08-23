@@ -111,10 +111,16 @@ export function App() {
     (source: 'draw' | 'best') => {
       if (!timeline) return;
       resumeFrom.current = timeline.circuitSteps;
+      // Measuring again has to give a *different* draw, or "the answer changes
+      // every run" is a claim the app quietly contradicts. The shot index is
+      // what seeds the trajectory, so advancing it is the redraw.
+      if (source === 'draw' && timeline.readout !== null) {
+        setShotIndex((i) => (i + 1) % Math.max(1, shots));
+      }
       setReadoutSource(source);
       setMeasureAtEnd(true);
     },
-    [timeline],
+    [timeline, shots],
   );
   useEffect(() => {
     if (timeline && resumeFrom.current !== null && timeline.readout !== null) {
@@ -158,8 +164,10 @@ export function App() {
 
   // Nothing to offer if the circuit already ends somewhere definite: a program
   // that measured everything itself has nothing left to collapse, and a readout
-  // would be a run of steps in which nothing moves.
-  const canMeasure = !!timeline && !measureAtEnd && (finalAnalysis?.support.length ?? 2) > 1;
+  // would be a run of steps in which nothing moves. Otherwise the offer stands
+  // even after a readout — measuring again is a different draw, and swapping to
+  // the best shot is the point of having ranked them.
+  const canMeasure = !!timeline && (finalAnalysis?.support.length ?? 2) > 1;
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
@@ -390,8 +398,11 @@ export function App() {
             onSpeed={player.setSpeed}
             onMeasure={canMeasure ? () => requestMeasure('draw') : undefined}
             onBestShot={
-              canMeasure && timeline?.bestShot ? () => requestMeasure('best') : undefined
+              canMeasure && timeline?.bestShot && timeline.readoutSource !== 'best'
+                ? () => requestMeasure('best')
+                : undefined
             }
+            measured={timeline?.readout !== null && timeline?.readoutSource === 'draw'}
           />
         </main>
 
