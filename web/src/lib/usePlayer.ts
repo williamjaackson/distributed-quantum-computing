@@ -11,7 +11,21 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 /** Milliseconds per step at 1x. Slow enough to read the step description. */
 export const BASE_INTERVAL_MS = 700;
 
-export const SPEEDS = [0.25, 0.5, 1, 2, 4, 8];
+/**
+ * Floor on the tick interval, so 'max' means "as fast as the display can show
+ * it" rather than a flood of renders the browser drops anyway.
+ */
+export const MIN_INTERVAL_MS = 16;
+
+/** 'Max' is unbounded rather than another multiplier — MIN_INTERVAL_MS bounds it. */
+export const MAX_SPEED = Infinity;
+
+export const SPEEDS = [0.25, 0.5, 1, 2, 4, 8, MAX_SPEED];
+
+/** Tick length for a speed, clamped so 'max' stays one step per frame. */
+export function intervalFor(speed: number) {
+  return Math.max(MIN_INTERVAL_MS, BASE_INTERVAL_MS / speed);
+}
 
 export function usePlayer(length: number) {
   const [index, setIndex] = useState(0);
@@ -43,7 +57,7 @@ export function usePlayer(length: number) {
         }
         return i + 1;
       });
-    }, BASE_INTERVAL_MS / speed);
+    }, intervalFor(speed));
     return () => window.clearInterval(id);
   }, [playing, speed]);
 
