@@ -25,7 +25,8 @@ interface Props {
   timeline: Timeline;
   analysis: Analysis;
   shots: number;
-  onShots: (n: number) => void;
+  /** Absent when the shot count is not this page's to change (a viewer). */
+  onShots?: (n: number) => void;
 }
 
 /** Outcomes listed before the tail is folded away. */
@@ -51,18 +52,22 @@ export function MeasurementPanel({ timeline, analysis, shots, onShots }: Props) 
             ? 'The circuit never measures, so every shot is drawn from one final state and the exact probability is known. The gap between sampled and exact is the shot noise — take more shots and it closes.'
             : 'The circuit measures, so every shot is a separate run of it and there is no single final state to compare against.'}
         </Info>
-        <select
-          className="compact heading-control"
-          value={shots}
-          aria-label="Shots"
-          onChange={(e) => onShots(Number(e.target.value))}
-        >
-          {SHOT_OPTIONS.map((n) => (
-            <option key={n} value={n}>
-              {n.toLocaleString()} shots
-            </option>
-          ))}
-        </select>
+        {onShots ? (
+          <select
+            className="compact heading-control"
+            value={shots}
+            aria-label="Shots"
+            onChange={(e) => onShots(Number(e.target.value))}
+          >
+            {SHOT_OPTIONS.map((n) => (
+              <option key={n} value={n}>
+                {n.toLocaleString()} shots
+              </option>
+            ))}
+          </select>
+        ) : (
+          <span className="heading-static">{shots.toLocaleString()} shots</span>
+        )}
       </h2>
 
       {timeline.shots.length === 0 ? (
