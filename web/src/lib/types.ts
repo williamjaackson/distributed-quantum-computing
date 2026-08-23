@@ -92,7 +92,8 @@ export type InputSpec =
       default: string;
     })
   | (InputBase & { kind: 'bits'; width: Dynamic<number>; default: number })
-  | (InputBase & { kind: 'toggle'; default: boolean });
+  | (InputBase & { kind: 'toggle'; default: boolean })
+  | (InputBase & { kind: 'circuit'; default: string });
 
 /** One extra fact a program wants to report, under a shared heading. */
 export interface ResultDetail {

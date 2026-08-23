@@ -8,6 +8,7 @@ import { resolve } from '../lib/inputs';
 import { bitString } from '../lib/format';
 import { Info } from './Info';
 import type { InputSpec, InputValue, InputValues } from '../lib/types';
+import { parseCircuit } from '../lib/circuit';
 
 interface Props {
   specs: InputSpec[];
@@ -50,6 +51,17 @@ function Field({
   const raw = values[spec.id];
 
   switch (spec.kind) {
+    case 'circuit':
+      {
+        const circuit = parseCircuit(raw ?? spec.default);
+        return (
+          <div className="circuit-summary">
+            <span><strong>{circuit.qubits}</strong> qubits</span>
+            <span><strong>{circuit.gates.length}</strong> gates</span>
+            <p className="field-hint">Edit gates directly in the Circuit panel.</p>
+          </div>
+        );
+      }
     case 'slider': {
       const value = typeof raw === 'number' ? raw : spec.default;
       const shown = spec.format ? spec.format(value) : value.toFixed(2);

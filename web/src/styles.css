@@ -34,6 +34,9 @@
   --good: #0ca30c;
   --critical: #d03b3b;
 
+  --shadow-sm: 0 1px 2px rgba(11, 11, 11, 0.06), 0 4px 12px rgba(11, 11, 11, 0.035);
+  --focus-ring: 0 0 0 3px rgba(42, 120, 214, 0.18);
+
   --radius: 10px;
   --radius-sm: 6px;
   --font: system-ui, -apple-system, 'Segoe UI', sans-serif;
@@ -165,6 +168,13 @@ button {
   border: 1px solid var(--border);
   border-radius: var(--radius);
   padding: 14px 16px;
+}
+
+button:focus-visible,
+select:focus-visible,
+input:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
 }
 
 .card-title {
@@ -715,6 +725,436 @@ select {
   border-radius: var(--radius-sm);
   background: var(--surface-1);
   color: var(--text-primary);
+}
+
+/* ---------- circuit builder ---------- */
+
+.circuit-builder {
+  display: grid;
+  gap: 14px;
+}
+
+.circuit-view {
+  display: grid;
+  gap: 16px;
+}
+
+.circuit-view > .circuit-builder {
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+}
+
+.circuit-view > .circuit-builder .gate-palette {
+  display: flex;
+  align-items: end;
+  gap: 18px;
+  overflow-x: auto;
+  padding-bottom: 2px;
+}
+
+.circuit-view > .circuit-builder .gate-group { flex: none; }
+
+.circuit-view > .circuit-builder .builder-sequence {
+  display: flex;
+  align-items: stretch;
+  gap: 0;
+  min-height: 92px;
+  overflow-x: auto;
+  padding: 2px 2px 8px;
+}
+
+.circuit-view > .circuit-builder .builder-sequence-head {
+  flex: 0 0 64px;
+  display: grid;
+  align-content: center;
+  justify-content: start;
+  margin: 0 4px 0 0;
+}
+
+.circuit-view > .circuit-builder .builder-gate-wrap {
+  display: flex;
+  flex: none;
+}
+
+.circuit-view > .circuit-builder .builder-gate {
+  width: 174px;
+  grid-template-columns: 18px 40px minmax(0, 1fr);
+  grid-template-rows: auto auto;
+  cursor: grab;
+}
+
+.circuit-view > .circuit-builder .gate-actions {
+  grid-column: 1 / -1;
+  display: flex;
+  justify-content: flex-end;
+}
+
+.circuit-view > .circuit-builder .gate-actions .danger { width: 28px; }
+
+.circuit-diagram {
+  min-width: 0;
+}
+
+.builder-register {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--grid);
+}
+
+.builder-register .stepper { gap: 5px; }
+.builder-register .btn { width: 28px; min-width: 28px; height: 28px; padding: 0; }
+
+.gate-palette {
+  display: grid;
+  gap: 10px;
+}
+
+.gate-group > span,
+.builder-sequence-head {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 5px;
+  color: var(--text-muted);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.gate-group > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.gate-group button {
+  min-width: 38px;
+  height: 28px;
+  padding: 0 8px;
+  border: 1px solid var(--blue-200);
+  border-radius: var(--radius-sm);
+  background: rgba(205, 226, 251, 0.28);
+  color: var(--blue-500);
+  font: 600 11px var(--mono);
+  cursor: pointer;
+}
+
+.gate-group button:hover:not(:disabled) {
+  color: #fff;
+  border-color: var(--blue);
+  background: var(--blue);
+  transform: translateY(-1px);
+}
+
+.gate-group button:disabled { opacity: 0.35; cursor: not-allowed; }
+
+.builder-sequence {
+  display: grid;
+  gap: 6px;
+}
+
+.builder-gate-wrap { display: grid; }
+
+.builder-drop-line {
+  width: 7px;
+  min-height: 20px;
+  border-radius: 4px;
+  transition: background 0.1s, width 0.1s;
+}
+
+.builder-drop-line.is-active {
+  width: 12px;
+  background: var(--blue);
+}
+
+.builder-drop-end { min-height: 60px; }
+
+.builder-sequence-head { margin: 2px 0 0; }
+.builder-sequence-head span:last-child { font-weight: 400; letter-spacing: 0; text-transform: none; }
+
+.builder-empty {
+  padding: 18px 12px;
+  border: 1px dashed var(--axis);
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  font-size: 12px;
+  text-align: center;
+}
+
+.builder-empty.is-drop {
+  border-color: var(--blue);
+  background: var(--blue-100);
+  color: var(--blue-500);
+}
+
+.builder-gate {
+  display: grid;
+  grid-template-columns: 18px 42px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 7px;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-1);
+  box-shadow: var(--shadow-sm);
+}
+
+.builder-gate.is-dragging { opacity: 0.35; }
+
+.circuit-summary {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.circuit-summary > span {
+  padding: 9px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  color: var(--text-secondary);
+  text-align: center;
+  font-size: 12px;
+}
+
+.circuit-summary strong { color: var(--blue-500); font: 600 14px var(--mono); }
+.circuit-summary p { grid-column: 1 / -1; }
+
+/* Visual circuit authoring: the circuit is the form. */
+.visual-builder { --wire-row: 48px; }
+
+.builder-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.visual-builder .builder-register {
+  flex: none;
+  padding: 0;
+  border: 0;
+  justify-content: start;
+}
+
+.visual-builder .builder-register button {
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  background: var(--surface-1);
+  cursor: pointer;
+}
+
+.visual-builder .builder-register button:hover:not(:disabled) { border-color: var(--blue); color: var(--blue); }
+.wire-count { min-width: 22px; text-align: center; color: var(--blue-500); font: 600 13px var(--mono); }
+.builder-help { color: var(--text-muted); font-size: 11px; }
+
+.wire-editor {
+  display: grid;
+  grid-template-columns: 36px minmax(0, 1fr);
+  min-height: calc(var(--wire-count) * var(--wire-row) + 30px);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-1);
+  overflow: hidden;
+}
+
+.wire-labels {
+  display: grid;
+  grid-template-rows: repeat(var(--wire-count), var(--wire-row));
+  padding-top: 30px;
+  background: var(--surface-2);
+  border-right: 1px solid var(--border);
+}
+
+.wire-labels span {
+  display: grid;
+  place-items: center;
+  color: var(--text-muted);
+  font: 10px var(--mono);
+}
+
+.wire-canvas {
+  position: relative;
+  display: flex;
+  min-width: min-content;
+  overflow-x: auto;
+  padding-right: 24px;
+}
+
+.wire-lines {
+  position: absolute;
+  inset: 30px 0 auto;
+  display: grid;
+  grid-template-rows: repeat(var(--wire-count), var(--wire-row));
+  width: 100%;
+  pointer-events: none;
+}
+
+.wire-lines i { position: relative; }
+.wire-lines i::after { content: ''; position: absolute; left: 0; right: 0; top: 50%; height: 1px; background: var(--axis); }
+
+.gate-column-wrap { position: relative; z-index: 1; display: flex; flex: none; }
+.gate-column { width: 72px; flex: none; transition: opacity 0.12s; }
+.gate-column.is-dragging { opacity: 0.25; }
+
+.column-head {
+  height: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 4px;
+  color: var(--text-muted);
+  font: 9px var(--mono);
+}
+
+.column-head button { width: 20px; height: 20px; padding: 0; border: 0; border-radius: 4px; background: transparent; color: var(--text-muted); cursor: pointer; }
+.column-head button:hover { background: var(--surface-2); color: var(--text-primary); }
+.drag-column { cursor: grab !important; font-size: 15px; }
+.remove-column { opacity: 0; color: var(--critical) !important; font-size: 15px; }
+.gate-column:hover .remove-column, .remove-column:focus-visible { opacity: 1; }
+
+.gate-lane {
+  position: relative;
+  display: grid;
+  grid-template-rows: repeat(var(--wire-count), var(--wire-row));
+}
+
+.wire-cell { position: relative; display: grid; place-items: center; border-radius: 6px; }
+.wire-cell.is-hot { background: var(--blue-100); box-shadow: inset 0 0 0 1px var(--blue-300); }
+
+.circuit-node {
+  position: relative;
+  z-index: 2;
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 2px solid var(--blue);
+  border-radius: 7px;
+  background: var(--surface-1);
+  color: var(--blue-500);
+  font: 600 10px var(--mono);
+  cursor: grab;
+  box-shadow: 0 1px 4px rgba(11, 11, 11, 0.08);
+}
+
+.circuit-node.control { width: 12px; height: 12px; border: 0; border-radius: 50%; background: var(--blue); box-shadow: 0 0 0 4px var(--surface-1); }
+.circuit-node.swap { border: 0; background: transparent; box-shadow: none; font-size: 22px; }
+.gate-connector { position: absolute; z-index: 1; left: calc(50% - 1px); width: 2px; background: var(--blue); pointer-events: none; }
+
+.angle-chips { display: flex; justify-content: center; gap: 2px; padding-top: 4px; }
+.angle-chips button { display: grid; min-width: 32px; padding: 2px 4px; border: 1px solid var(--blue-200); border-radius: 999px; background: var(--surface-1); color: var(--blue-500); font: 9px var(--mono); cursor: pointer; }
+.angle-chips button span { display: none; }
+.angle-chips button:hover { background: var(--blue-100); }
+
+.column-drop { position: relative; z-index: 3; width: 8px; flex: none; margin: 26px -4px 0; border-radius: 4px; }
+.column-drop.end { margin-left: -4px; min-height: calc(var(--wire-count) * var(--wire-row)); }
+.column-drop.is-hot { width: 12px; margin-left: -6px; margin-right: -6px; background: var(--blue); }
+
+.wire-empty {
+  position: relative;
+  z-index: 2;
+  display: grid;
+  grid-template-rows: repeat(var(--wire-count), var(--wire-row));
+  width: 260px;
+  height: calc(var(--wire-count) * var(--wire-row));
+  margin-top: 30px;
+  border: 1px dashed var(--axis);
+  border-radius: 8px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+.wire-empty > span { position: absolute; inset: 0; display: grid; place-items: center; pointer-events: none; }
+.wire-empty > div { position: relative; z-index: 1; border-radius: 5px; }
+.wire-empty > div.is-hot { background: rgba(205, 226, 251, 0.72); box-shadow: inset 0 0 0 1px var(--blue-300); }
+
+.add-gate-lane {
+  position: relative;
+  z-index: 2;
+  display: grid;
+  flex: 0 0 58px;
+  grid-template-rows: repeat(var(--wire-count), var(--wire-row));
+  margin-top: 30px;
+}
+
+.add-gate-lane > span {
+  position: absolute;
+  bottom: 100%;
+  width: 100%;
+  color: var(--text-muted);
+  font: 9px var(--mono);
+  text-align: center;
+}
+
+.add-gate-lane > div { display: grid; place-items: center; border-radius: 6px; }
+.add-gate-lane i {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border: 1px dashed var(--axis);
+  border-radius: 50%;
+  color: var(--text-muted);
+  font-style: normal;
+  opacity: 0.45;
+}
+.add-gate-lane > div.is-hot { background: var(--blue-100); }
+.add-gate-lane > div.is-hot i { border-color: var(--blue); color: var(--blue); opacity: 1; }
+
+@media (max-width: 700px) {
+  .builder-toolbar { align-items: flex-start; flex-direction: column; gap: 6px; }
+  .builder-help { display: none; }
+}
+
+.gate-order { color: var(--text-muted); font: 10px var(--mono); text-align: center; }
+
+.gate-symbol {
+  display: grid;
+  place-items: center;
+  min-height: 30px;
+  border-radius: 5px;
+  background: var(--blue);
+  color: #fff;
+  font: 600 10px var(--mono);
+}
+
+.gate-config {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 5px;
+}
+
+.gate-config label { display: grid; gap: 2px; }
+.gate-config label > span { color: var(--text-muted); font-size: 9px; }
+.gate-config select { min-width: 0; padding: 3px 4px; font: 11px var(--mono); }
+
+.gate-actions { display: grid; grid-template-columns: repeat(2, 22px); gap: 2px; }
+.gate-actions button {
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+.gate-actions button:hover:not(:disabled) { background: var(--surface-2); color: var(--text-primary); }
+.gate-actions button:disabled { opacity: 0.2; cursor: default; }
+.gate-actions .danger { grid-column: 1 / -1; width: 46px; color: var(--critical); }
+
+@media (max-width: 1200px) {
+  .builder-gate { grid-template-columns: 18px 48px minmax(0, 1fr) auto; }
+  .gate-config { grid-template-columns: repeat(3, minmax(70px, 1fr)); }
 }
 
 .stepper {

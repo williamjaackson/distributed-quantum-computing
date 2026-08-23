@@ -318,6 +318,7 @@ export function App() {
                   frame={frame}
                   analysis={analysis}
                   onSeek={player.seek}
+                  onCircuitChange={program.id === 'builder' ? (value) => setValue('circuit', value) : undefined}
                 />
               ) : (
                 <div className="center">
