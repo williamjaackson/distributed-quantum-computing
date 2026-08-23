@@ -8,6 +8,22 @@ npm run dev        # from the repo root: builds the WASM package, then serves
 npm test           # engine tests, smoke tests, typecheck, program verification
 ```
 
+## Sharing and pooled measurement
+
+The Share card creates a room and a link on the current origin. Opening that
+link creates a read-only viewer which reproduces the host's deterministic run
+locally and follows its view and playhead. During measurement, every connected
+viewer takes a share of the requested shots; the host re-takes work from peers
+that disconnect, merges all returned histograms, and broadcasts the merged
+result back to the room.
+
+Signaling is served at `/ws` by Vite in development and preview, so there is no
+second process or relay address in ordinary links. `npm run signal` starts the
+standalone relay for deployments that need one; pass its address with the
+advanced `?s=` query parameter. Peer traffic uses WebRTC directly. Rooms are
+unprotected capabilities and the default STUN-only setup does not traverse
+every restrictive NAT.
+
 ## Layout
 
 Three columns: what to run on the left, what it looks like in the middle, what

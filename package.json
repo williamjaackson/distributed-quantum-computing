@@ -10,6 +10,8 @@
     "preview": "npm --prefix web run preview",
     "typecheck": "npm --prefix web run typecheck",
     "verify": "npm --prefix web run verify",
-    "test": "npm run test:engine && npm run smoke && npm run typecheck && npm run verify"
+    "signal": "node net/signaling-server/server.mjs",
+    "test:net": "npm --prefix web run test:net && npm --prefix net/signaling-server test",
+    "test": "npm run test:engine && npm run smoke && npm run typecheck && npm run verify && npm run test:net"
   }
 }

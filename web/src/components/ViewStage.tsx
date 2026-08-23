@@ -314,12 +314,15 @@ function reweighted(weights: number[], i: number, shiftPx: number, extent: numbe
 export function ViewStage({
   layout,
   program,
+  readOnly = false,
   badge,
   children,
 }: {
   layout: StageLayout;
   /** For the suggested-view marker on the tabs. */
   program: { name: string; suggestedView?: string };
+  /** Locks view and layout controls while a viewer follows the host. */
+  readOnly?: boolean;
   /** One fact about the whole run, not about a projection of it. */
   badge?: ReactNode;
   /** Renders one pane's body. */
@@ -415,13 +418,14 @@ export function ViewStage({
               key={v.id}
               className={`tab${suggested ? ' tab-suggested' : ''}`}
               aria-pressed={shown}
-              draggable
+              disabled={readOnly}
+              draggable={!readOnly}
               onDragStart={(e) => startDrag(e, { kind: 'view', id: v.id })}
               onDragEnd={endDrag}
               onClick={(e) =>
                 e.shiftKey || e.metaKey || e.ctrlKey ? layout.toggle(v.id) : layout.showOnly(v.id)
               }
-              title={[
+              title={readOnly ? 'the host chooses the view' : [
                 suggested ? `${v.subtitle} — the best angle on ${program.name}` : v.subtitle,
                 shown && multi
                   ? 'shift-click to close it'
@@ -483,7 +487,7 @@ export function ViewStage({
                     <section className="stage" data-pane={`${ri}.${ci}`} style={{ flex: pane.w }}>
                       <div
                         className="stage-head"
-                        draggable={multi}
+                        draggable={!readOnly && multi}
                         onDragStart={(e) => startDrag(e, { kind: 'pane', id: pane.id })}
                         onDragEnd={endDrag}
                       >
@@ -492,7 +496,7 @@ export function ViewStage({
                             the width: it is the sentence the ⓘ opens with. */}
                         {!multi && <p>{view.subtitle}</p>}
                         <Info about={`the ${view.name.toLowerCase()} view`}>{view.about}</Info>
-                        <span className="pane-zoom">
+                        {!readOnly && <span className="pane-zoom">
                           <button
                             type="button"
                             aria-label={`Draw the ${view.name} view smaller`}
@@ -523,8 +527,8 @@ export function ViewStage({
                           >
                             +
                           </button>
-                        </span>
-                        {multi && (
+                        </span>}
+                        {multi && !readOnly && (
                           <button
                             type="button"
                             className="pane-close"
