@@ -1,0 +1,17 @@
+{
+  "name": "signaling-server",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "WebRTC signaling relay for pairing browsers into a distributed qsim run",
+  "main": "server.mjs",
+  "scripts": {
+    "start": "node server.mjs",
+    "test": "node --test test/"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "ws": "^8.21.3"
+  }
+}

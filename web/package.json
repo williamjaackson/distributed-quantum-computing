@@ -1,0 +1,9 @@
+{
+  "name": "dqc-web",
+  "private": true,
+  "type": "module",
+  "description": "Browser orchestrator, mesh networking, and worker glue for distributing the qsim engine across machines.",
+  "scripts": {
+    "test": "node --test test/"
+  }
+}

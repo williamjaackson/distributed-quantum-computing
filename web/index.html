@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>qsim — distributed entanglement simulation</title>
+<style>
+  body { font-family: ui-monospace, Menlo, Consolas, monospace; max-width: 900px; margin: 2rem auto; padding: 0 1rem; color: #1a1a1a; }
+  h1 { font-size: 1.1rem; }
+  section { border: 1px solid #ccc; border-radius: 6px; padding: 1rem; margin-bottom: 1rem; }
+  label { display: block; margin: 0.4rem 0 0.15rem; font-size: 0.85rem; color: #444; }
+  input, select, textarea, button { font-family: inherit; font-size: 0.9rem; }
+  input, select, textarea { width: 100%; box-sizing: border-box; padding: 0.3rem; }
+  textarea { height: 8rem; }
+  button { padding: 0.4rem 0.8rem; margin-top: 0.5rem; cursor: pointer; }
+  .row { display: flex; gap: 1rem; }
+  .row > div { flex: 1; }
+  #log, #results { white-space: pre-wrap; background: #f6f6f6; padding: 0.5rem; height: 10rem; overflow-y: auto; font-size: 0.8rem; }
+  #results { height: auto; min-height: 4rem; }
+  .presets button { margin-right: 0.4rem; }
+</style>
+</head>
+<body>
+
+<h1>Distributed qsim — shots &amp; qubit-expansion across browsers</h1>
+
+<section>
+  <label for="signalUrl">Signaling server URL</label>
+  <input id="signalUrl" value="ws://localhost:8787" />
+
+  <div class="row">
+    <div>
+      <button id="createRoomBtn">Create room (become host)</button>
+      <p>Room code: <strong id="roomCode">—</strong></p>
+      <label for="shareLink">Share this link with other machines</label>
+      <input id="shareLink" readonly onclick="this.select()" />
+    </div>
+    <div>
+      <label for="roomInput">Room code to join</label>
+      <input id="roomInput" placeholder="e.g. 7K3M9P" />
+      <button id="joinRoomBtn">Join room</button>
+    </div>
+  </div>
+</section>
+
+<section>
+  <label for="mode">Mode</label>
+  <select id="mode">
+    <option value="shots">Shots — every machine runs the same circuit, shots split across all of you</option>
+    <option value="expand">Expand — the qubit register is sharded across all of you</option>
+  </select>
+
+  <div class="row">
+    <div>
+      <label for="qubits">Qubits (shots mode: register size; expand mode: total/global qubits)</label>
+      <input id="qubits" type="number" value="3" min="1" />
+    </div>
+    <div>
+      <label for="maxShardQubits">Max qubits per shard (expand mode only)</label>
+      <input id="maxShardQubits" type="number" value="2" min="0" max="26" />
+    </div>
+    <div>
+      <label for="totalShots">Total shots to sample</label>
+      <input id="totalShots" type="number" value="1000" min="1" />
+    </div>
+  </div>
+
+  <label><input id="includeSelf" type="checkbox" checked style="width:auto" /> Include this device as a worker too</label>
+
+  <label for="circuit">Circuit (JSON array of <code>{name, qubits, params}</code> — controls listed before the target)</label>
+  <div class="presets">
+    <button type="button" data-preset="bell">Bell pair</button>
+    <button type="button" data-preset="ghz4">GHZ(4)</button>
+    <button type="button" data-preset="qft3">QFT(3)</button>
+  </div>
+  <textarea id="circuit">[{"name":"h","qubits":[0]},{"name":"cx","qubits":[0,1]}]</textarea>
+
+  <button id="runButton" disabled>Run (host only)</button>
+</section>
+
+<section>
+  <label>Results (top basis states by count)</label>
+  <div id="results"></div>
+</section>
+
+<section>
+  <label>Log</label>
+  <div id="log"></div>
+</section>
+
+<script type="module" src="src/app.js"></script>
+</body>
+</html>
