@@ -234,11 +234,14 @@ The panel says it in the shape every program uses: the answer is the best
 allocation the shots found, `expected` is the optimum from exhaustive search, and
 the ✓ says whether this run got there.
 
-It asks for 65,536 shots, which is not a round number picked for comfort: the
-optimum carries about one part in a thousand of the distribution at the shipped
-angles, so a thousand shots lands on it roughly half the time. Sixty-odd
-thousand finds it seventy to eighty times, every run. Sampling less is not a
-faster answer, it is a worse one that looks the same.
+It asks for 65,536 shots. The optimum carries about one part in a thousand of
+the distribution at the shipped angles, which is why an earlier version of this
+app — sampling a thousand — landed on it only about half the time and spent the
+other half reporting a worse allocation as though it were the answer. The 8,192
+floor already fixes that on its own: six runs at the floor found the optimum
+every time, with 5 to 12 hits. 65,536 is asked for so the confidence figure is
+seventy-odd hits rather than five, because "5 of 8,192" reads as luck even when
+it isn't.
 
 The answer is the cheapest allocation **among the shots**, which is how
 `tests/qaoa_module.rs` defines it and not the same thing as the likeliest
