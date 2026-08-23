@@ -22,7 +22,7 @@
 import { qaoaPlan, gateNames } from 'qsim';
 import { GATE_CONTROLS } from '../lib/steps';
 import { num, str } from '../lib/inputs';
-import type { GateStep, Program, Readout, Step } from '../lib/types';
+import type { GateStep, Program, Step } from '../lib/types';
 
 // ---------------------------------------------------------------------------
 // The problem
@@ -275,74 +275,64 @@ export const qaoa: Program = {
     );
     yield* decodePlan(flat, penalties);
   },
-  outputs: ({ probabilityOf, shots, measurement, bestShot }) => {
+  result: ({ probabilityOf, shots, measurement, bestShot }) => {
     const best = classicalBest();
-    // The answer, the way `tests/qaoa_module.rs` defines it: the cheapest
-    // allocation among the states actually sampled. QAOA is a sampler, not an
-    // oracle — the likeliest outcome is usually mediocre, and reporting it as
-    // the result is how you end up presenting a wrong answer confidently. The
-    // ranking comes from `score`, so the panel and the Best shot button cannot
-    // disagree about which allocation won.
+    // The answer is the cheapest allocation among the states actually sampled,
+    // the way `tests/qaoa_module.rs` defines it. The ranking comes from `score`
+    // so the panel, the Best shot button and the readout cannot disagree about
+    // which allocation won.
     const found = bestShot ? { state: bestShot.index, cost: bestShot.score } : null;
-    let feasibleShots = 0;
-    for (const o of shots) {
-      if (Number.isFinite(objective(o.index))) feasibleShots += o.count;
-    }
     const drawn = shots.reduce((a, o) => a + o.count, 0) || 1;
+    const withinBudget = shots.reduce(
+      (a, o) => a + (Number.isFinite(objective(o.index)) ? o.count : 0),
+      0,
+    );
     const optimumHits = shots
       .filter((o) => best.states.includes(o.index))
       .reduce((a, o) => a + o.count, 0);
-
     const before = best.states.length / STATES;
     const now = best.states.reduce((s, x) => s + probabilityOf(x), 0);
-    const allocated = found ? allocations(found.state) : null;
+    const label = (state: number) => {
+      const allocated = allocations(state);
+      return CONSUMERS.map((c, i) => `${c.short} ${allocated[i]}`).join(' · ');
+    };
 
-    const rows: Readout[] = [
-      {
-        label: `Best of ${measurement.taken.toLocaleString()} shots`,
-        value: allocated
-          ? CONSUMERS.map((c, i) => `${c.short} ${allocated[i]}`).join(' · ')
-          : 'nothing within budget',
-        hero: true,
-        hint: allocated
-          ? `${allocated.reduce((a, b) => a + b, 0)} of ${BUDGET} W used, leaving ${found!.cost.toFixed(
-              4,
-            )} unmet`
-          : 'every shot broke the budget',
-      },
-      {
-        label: 'Optimum',
-        value: CONSUMERS.map((c, i) => `${c.short} ${best.allocated[i]}`).join(' · '),
-        hint: `${best.cost.toFixed(4)} unmet, by exhaustive search over the ${best.feasible.toLocaleString()} allocations within budget`,
-      },
-      {
-        label: 'Best shot ranked',
-        value: bestShot ? `${bestShot.rank} of ${shots.length}` : '—',
-        hint: bestShot
-          ? `by how often it came up — ${bestShot.count} time${
-              bestShot.count === 1 ? '' : 's'
-            }. The best allocation is rarely the likeliest one`
-          : 'nothing within budget was drawn',
-      },
-      {
-        label: 'Shots that found it',
-        value: `${optimumHits.toLocaleString()} of ${measurement.taken.toLocaleString()}`,
-        hint:
-          optimumHits === 0
-            ? 'none — take more shots, or move γ'
-            : `${((optimumHits / drawn) * 100).toFixed(2)}% of them`,
-      },
-      {
-        label: 'Shots within budget',
-        value: `${((feasibleShots / drawn) * 100).toFixed(1)}%`,
-        hint: 'the budget is a phase penalty, not a constraint — it can be broken',
-      },
-      {
-        label: 'P(optimum)',
-        value: `${(now * 100).toFixed(3)}%`,
-        hint: `${(now / before).toFixed(1)}× the ${(before * 100).toFixed(3)}% an even draw would give`,
-      },
-    ];
-    return rows;
+    return {
+      answer: found ? label(found.state) : 'nothing within budget',
+      answerNote: found
+        ? `${allocations(found.state).reduce((a, b) => a + b, 0)} of ${BUDGET} W used, leaving ${found.cost.toFixed(
+            4,
+          )} unmet`
+        : 'every shot broke the budget',
+      expected: label(best.states[0]),
+      correct: found !== null && Math.abs(found.cost - best.cost) < 1e-9,
+      confidence: `${optimumHits.toLocaleString()} of ${measurement.taken.toLocaleString()} shots found it`,
+      confidenceNote: `The optimum holds ${(now * 100).toFixed(3)}% of the probability — ${(
+        now / before
+      ).toFixed(
+        1,
+      )}× the even draw it started from — so one measurement is almost always a poor allocation and the answer is the best of many.`,
+      detail: [
+        {
+          label: 'Optimum leaves',
+          value: best.cost.toFixed(4),
+          note: `Unmet demand, by exhaustive search over the ${best.feasible.toLocaleString()} allocations that stay within budget. 4096 states is nothing to enumerate, and a QAOA result with nothing to compare against is just a number.`,
+        },
+        {
+          label: 'Best shot ranked',
+          value: bestShot ? `${bestShot.rank} of ${shots.length}` : '—',
+          note: bestShot
+            ? `By how often it came up: ${bestShot.count} time${
+                bestShot.count === 1 ? '' : 's'
+              }. The best allocation is rarely the likeliest one, which is why the likeliest is the wrong thing to report.`
+            : 'Nothing within budget was drawn.',
+        },
+        {
+          label: 'Within budget',
+          value: `${((withinBudget / drawn) * 100).toFixed(1)}%`,
+          note: 'The 20 W budget is a phase penalty rather than a constraint, so a shot can simply break it — about a tenth of them do.',
+        },
+      ],
+    };
   },
 };

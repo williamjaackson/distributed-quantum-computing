@@ -229,6 +229,10 @@ draw scores around 9.4 against an optimum of 2.69, because the optimum holds
 onto the one that won — ranked around 400th by frequency, drawn once in a
 thousand. That gap is the whole character of the algorithm.
 
+The panel says it in the shape every program uses: the answer is the best
+allocation the shots found, `expected` is the optimum from exhaustive search, and
+the ✓ says whether this run got there.
+
 The answer is the cheapest allocation **among the shots**, which is how
 `tests/qaoa_module.rs` defines it and not the same thing as the likeliest
 outcome. At the shipped angles the likeliest outcome leaves 10.92 of demand
