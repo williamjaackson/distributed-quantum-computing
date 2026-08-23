@@ -259,6 +259,24 @@ button {
   font-size: 12px;
 }
 
+/* Once the register has been read out, every view is showing *one draw* — which
+   looks exactly like an answer and is not one. Said here because it is the same
+   caveat whichever view you are on. */
+.showing {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--orange);
+  border: 1px solid var(--orange);
+  border-radius: 999px;
+  padding: 0 8px;
+  white-space: nowrap;
+}
+
+.showing.is-best {
+  color: var(--blue);
+  border-color: var(--blue);
+}
+
 .stage-body {
   min-height: 0;
   overflow: auto;

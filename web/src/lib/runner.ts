@@ -18,7 +18,7 @@
  *   kilobytes a frame instead of megabytes, and it is what lets the register go
  *   as far as the engine can take it.
  */
-import type { Backend, EngineLimits, Execution } from './backend';
+import type { Backend, EngineLimits } from './backend';
 import { createBackend, engineLimits, loadWasm, TOP_K } from './backend';
 import { GATE_PARAMS, gateArity, GATE_CONTROLS } from './steps';
 import type {
@@ -67,15 +67,17 @@ export const SHOT_BUDGET = 4e8;
 export const SHOT_OPTIONS = [128, 1024, 8192, 65536];
 
 /**
- * Seed for one shot's measurement draws.
+ * Seed for one shot of a run, derived from the run's own seed.
  *
- * Derived from the shot index rather than taken from the user, so the same
- * inputs always give the same answer and "shot 7" is always the same run. A
- * seed control would be asking the reader to manage the thing shots exist to
- * average away.
+ * The run seed is *not* derived from anything: it comes from the caller, which
+ * rolls a fresh one whenever a new measurement is asked for. An earlier version
+ * derived it from a fixed index in the name of reproducibility, and the result
+ * was a coin flip that came up heads every single time — the one thing a coin
+ * flip must not do. Shots within a run are still derived, so the histogram is
+ * stable while you read it.
  */
-function seedFor(shot: number): number {
-  return (0x5eed + Math.imul(shot, 0x9e3779b1)) >>> 0;
+function seedFor(run: number, shot: number): number {
+  return (run + Math.imul(shot + 1, 0x9e3779b1)) >>> 0;
 }
 
 export function keepAmplitudes(nQubits: number, limits: EngineLimits): boolean {
@@ -88,39 +90,22 @@ export function computeLinks(nQubits: number): boolean {
 }
 
 /**
- * Largest register that stays comfortable to step through.
+ * Largest register the visualiser will attempt, in qubits.
  *
- * Not an engine limit — measured cost. The per-step summary is a pass over the
- * state per qubit, so it grows as `n * 2^n`: about 10 ms a step at 16 qubits,
- * 60 ms at 22, and a quarter of a second at 24. 22 is the last size where
- * pressing play still feels like playback.
+ * Everything runs sharded, so this is not an engine limit: a shard holds 26
+ * qubits and K shards hold K times as much, which puts the real ceiling at the
+ * machine's memory. 30 qubits is 16 shards of 1 GiB.
+ *
+ * It is a guard rail, not a recommendation. Cost grows as `n * 2^n` per step
+ * because the summary is a pass over the state per qubit — about 10 ms a step at
+ * 16 qubits, 60 ms at 22, a quarter of a second at 24, and tens of seconds by
+ * 28. Past the low twenties this stops being playback and becomes a batch job
+ * with a progress line, which is worth doing and worth knowing about.
  */
-export const INTERACTIVE_QUBITS = 22;
+export const CEILING = 30;
 
-/**
- * Guard rail on a sharded run, in qubits.
- *
- * Sharding removes the engine's ceiling — capacity becomes the machine's memory
- * — which means nothing stops a stray click from asking for more RAM than the
- * machine has and taking the tab down with it. 30 qubits is 16 GiB.
- */
-export const SHARDED_CEILING = 30;
-
-/**
- * Largest register the visualiser will attempt.
- *
- * `limits` is passed in rather than read here, because the engine's own numbers
- * are only knowable once the module has loaded and this is called during the
- * first render. A null `limits` means "not known yet", which resolves to the
- * interactive ceiling — the one value that is safe without asking the engine.
- */
-export function ceiling(
-  execution: Execution,
-  unlocked: boolean,
-  limits: EngineLimits | null,
-): number {
-  if (!unlocked || !limits) return INTERACTIVE_QUBITS;
-  return execution === 'whole' ? limits.maxWholeState : SHARDED_CEILING;
+export function ceiling(): number {
+  return CEILING;
 }
 
 function validate(step: Step, nQubits: number): void {
@@ -154,13 +139,16 @@ function validate(step: Step, nQubits: number): void {
 }
 
 export interface RunOptions {
-  execution: Execution;
-  /** Allow the engine's full ceiling instead of the interactive one. */
-  unlocked: boolean;
   /** How many times to measure the circuit. */
   shots: number;
-  /** Which shot the recorded frames should be. */
-  shotIndex: number;
+  /**
+   * Seed for this run's measurements.
+   *
+   * A fresh one means a fresh draw. The caller decides when that happens —
+   * pressing Measure again should give a different answer, changing an input
+   * should not.
+   */
+  seed: number;
   /**
    * Which outcome a readout should land on.
    *
@@ -197,13 +185,13 @@ export async function runProgram(
   values: InputValues,
   options: RunOptions,
 ): Promise<Timeline> {
-  const { execution, unlocked, shots, shotIndex, measureAtEnd, readoutSource } = options;
+  const { shots, seed, measureAtEnd, readoutSource } = options;
   const { onProgress, cancelled } = options;
   // Every limit below comes from the engine, so the module has to be up first.
   await loadWasm();
   const limits = engineLimits();
   const requested = program.qubits(values);
-  const max = ceiling(execution, unlocked, limits);
+  const max = ceiling();
   const nQubits = Math.max(1, Math.min(max, requested));
   const wireLabels =
     program.wireLabels?.(values) ?? Array.from({ length: nQubits }, (_, i) => `q${i}`);
@@ -226,7 +214,7 @@ export async function runProgram(
   let backend: Backend | null = null;
   const started = performance.now();
   try {
-    backend = await createBackend(nQubits, seedFor(shotIndex), execution);
+    backend = await createBackend(nQubits, seedFor(seed, 0));
     frames.push(await snapshot(backend, 0, bits, want));
 
     if (!error) {
@@ -268,8 +256,8 @@ export async function runProgram(
     try {
       const result =
         collapses === 0
-          ? await sampleOnce(backend, shots)
-          : await repeatRun(backend, program, values, steps.length, nQubits, shots, cancelled);
+          ? await sampleOnce(backend, shots, seed)
+          : await repeatRun(backend, program, values, steps.length, nQubits, shots, seed, cancelled);
       outcomes = result.outcomes;
       measurement = result.measurement;
     } catch (e) {
@@ -303,7 +291,7 @@ export async function runProgram(
       // `repeatRun` reset the register to take its shots, so put the trajectory
       // back. The same seed reproduces the run the frames recorded.
       if (collapses > 0) {
-        await backend.reset(seedFor(shotIndex));
+        await backend.reset(seedFor(seed, 0));
         const replay: Record<string, number> = {};
         const cl2: Classical = {
           get: (b) => replay[b],
@@ -373,7 +361,7 @@ export async function runProgram(
   return {
     program,
     values,
-    shotIndex,
+    seed,
     nQubits,
     amplitudeCount: 2 ** nQubits,
     wireLabels,
@@ -448,8 +436,8 @@ function ranked(counts: Map<number, number>): ShotOutcome[] {
  * them from it in one pass. Exact, and no more expensive for a million shots
  * than for one.
  */
-async function sampleOnce(backend: Backend, shots: number): Promise<Ensemble> {
-  const counts = await backend.sample(shots, seedFor(0));
+async function sampleOnce(backend: Backend, shots: number, seed: number): Promise<Ensemble> {
+  const counts = await backend.sample(shots, seedFor(seed, 0));
   return {
     outcomes: ranked(counts),
     measurement: { requested: shots, taken: shots, method: 'sampled' },
@@ -471,6 +459,7 @@ async function repeatRun(
   gates: number,
   nQubits: number,
   shots: number,
+  seed: number,
   cancelled?: () => boolean,
 ): Promise<Ensemble> {
   const perShot = Math.max(1, gates) * 2 ** nQubits;
@@ -486,7 +475,7 @@ async function repeatRun(
 
   for (let shot = 0; shot < taken; shot++) {
     if (cancelled?.()) break;
-    await backend.reset(seedFor(shot));
+    await backend.reset(seedFor(seed, shot));
     for (const key of Object.keys(bits)) delete bits[key];
     for (const step of program.build(values, cl)) {
       if (step.kind === 'measure') bits[step.bit] = await backend.measure(step.qubit);
@@ -494,7 +483,7 @@ async function repeatRun(
     }
     // One draw of whatever is left undetermined. A measured qubit is already
     // collapsed, so this reads the register the way a machine would.
-    for (const [index, count] of await backend.sample(1, seedFor(shot ^ 0x5f5e1))) {
+    for (const [index, count] of await backend.sample(1, seedFor(seed, shot ^ 0x5f5e1))) {
       counts.set(index, (counts.get(index) ?? 0) + count);
     }
   }

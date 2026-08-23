@@ -19,11 +19,9 @@
  * refuses to hand one over and it would be pointless to draw if it did.
  */
 import init, {
-  Simulator,
   fullArrayQubitLimit,
   maxQubits,
   maxShardQubits,
-  memoryBytesRequired,
   planShards,
 } from 'qsim';
 import wasmUrl from 'qsim/qsim_bg.wasm?url';
@@ -143,125 +141,57 @@ export function planLayout(globalQubits: number, minShardBits = 0): ShardLayout 
   return { globalQubits, shardBits, localQubits, shards, bytesPerShard, totalBytes };
 }
 
-export type Execution = 'auto' | 'whole' | 'sharded';
-
 /**
- * Build a backend for `nQubits`.
+ * Build a register for `nQubits`. Always sharded.
  *
- * `auto` uses one module while one module will do — it is strictly faster, since
- * a sharded gate on a global qubit costs a block exchange per pair. Sharding can
- * also be forced at any size, which is the only way to *watch* it work: the
- * mechanism is identical at four qubits and at thirty.
+ * One module could hold anything up to 26 qubits, and for a while the app chose
+ * between the two. That was a setting nobody wanted to think about and a second
+ * code path to keep honest, so it is gone: K shards hold K times what one module
+ * can, the mechanism is identical at four qubits and at thirty, and the ceiling
+ * becomes the machine's memory rather than `isize::MAX`.
+ *
+ * At least two shards even for a tiny register, so the sharded path is the path
+ * — a "sharded" run over a single shard would exercise none of the routing.
  */
-export async function createBackend(
-  nQubits: number,
-  seed: number,
-  execution: Execution,
-): Promise<Backend> {
+export async function createBackend(nQubits: number, seed: number): Promise<Backend> {
   await loadWasm();
-  const limits = engineLimits();
-  const useShards =
-    execution === 'sharded' || (execution === 'auto' && nQubits > limits.maxShardQubits);
-  if (!useShards) {
-    if (nQubits > limits.maxWholeState) {
-      throw new Error(
-        `${nQubits} qubits needs sharding — one module holds at most ${limits.maxWholeState}`,
-      );
-    }
-    return new WholeStateBackend(nQubits, seed);
-  }
-  // Forcing sharding at a small size still has to produce more than one shard,
-  // or it would demonstrate nothing.
-  const minShardBits = execution === 'sharded' ? Math.min(2, Math.max(1, nQubits - 1)) : 0;
+  const minShardBits = Math.min(2, Math.max(1, nQubits - 1));
   return ShardedRegister.create(planLayout(nQubits, minShardBits), seed);
-}
-
-// ---------------------------------------------------------------------------
-// Whole state, on this thread
-// ---------------------------------------------------------------------------
-
-class WholeStateBackend implements Backend {
-  readonly sharded = false;
-  readonly shards = 1;
-  readonly description: string;
-  private sim: Simulator;
-
-  constructor(readonly nQubits: number, seed: number) {
-    this.sim = new Simulator(nQubits);
-    this.sim.setSeed(seed);
-    this.description = `one ${formatBytes(memoryBytesRequired(nQubits))} state vector`;
-  }
-
-  async applyGate(name: string, qubits: number[], params: number[]): Promise<void> {
-    this.sim.applyGate(name, new Uint32Array(qubits), new Float64Array(params));
-  }
-
-  async measure(qubit: number): Promise<number> {
-    return this.sim.measure(qubit);
-  }
-
-  async collapse(qubit: number, outcome: number): Promise<void> {
-    this.sim.collapse(qubit, outcome);
-  }
-
-  async reset(seed: number): Promise<void> {
-    this.sim.reset();
-    this.sim.setSeed(seed);
-  }
-
-  async snapshot(want: SnapshotRequest): Promise<Snapshot> {
-    const n = this.nQubits;
-    const bloch = new Float64Array(3 * n);
-    for (let q = 0; q < n; q++) bloch.set(this.sim.blochVector(q), 3 * q);
-    const top = this.sim.topAmplitudesFlat(TOP_K);
-    const count = 2 ** n;
-    return {
-      norm: this.sim.norm(),
-      bloch,
-      top,
-      topTruncated: top.length / 3 >= TOP_K && count > TOP_K,
-      amps: want.amps ? this.sim.amplitudes() : null,
-      links: want.links ? this.correlations() : null,
-    };
-  }
-
-  /**
-   * Connected Pauli correlation for every pair, from the engine's own two-qubit
-   * reduced density matrices.
-   */
-  private correlations(): Float64Array {
-    const n = this.nQubits;
-    const out = new Float64Array(n * n);
-    const single = (q: number) => this.sim.blochVector(q);
-    const bloch: Float64Array[] = [];
-    for (let q = 0; q < n; q++) bloch.push(single(q));
-    for (let a = 0; a < n; a++) {
-      for (let b = a + 1; b < n; b++) {
-        const c = pauliCorrelation(this.sim.reducedTwoFlat(a, b), bloch[a], bloch[b]);
-        out[a * n + b] = c;
-        out[b * n + a] = c;
-      }
-    }
-    return out;
-  }
-
-  async sample(shots: number, seed: number): Promise<Map<number, number>> {
-    const flat = this.sim.sampleFlat(shots, seed);
-    const out = new Map<number, number>();
-    for (let i = 0; i + 1 < flat.length; i += 2) {
-      out.set(flat[i], (out.get(flat[i]) ?? 0) + flat[i + 1]);
-    }
-    return out;
-  }
-
-  dispose() {
-    this.sim.free();
-  }
 }
 
 // ---------------------------------------------------------------------------
 // Shared helpers
 // ---------------------------------------------------------------------------
+
+/**
+ * Bloch vector of one qubit, read off a raw amplitude array.
+ *
+ * The engine computes these during a run; this is for the one case that has the
+ * amplitudes and not a register — pairing them up for a correlation.
+ */
+export function blochOf(amps: Float64Array, q: number): Float64Array {
+  const n = amps.length / 2;
+  const bit = 1 << q;
+  let r00 = 0;
+  let r11 = 0;
+  let re01 = 0;
+  let im01 = 0;
+  for (let i = 0; i < n; i++) {
+    const are = amps[2 * i];
+    const aim = amps[2 * i + 1];
+    if ((i & bit) === 0) {
+      r00 += are * are + aim * aim;
+      const j = i | bit;
+      const bre = amps[2 * j];
+      const bim = amps[2 * j + 1];
+      re01 += are * bre + aim * bim;
+      im01 += aim * bre - are * bim;
+    } else {
+      r11 += are * are + aim * aim;
+    }
+  }
+  return Float64Array.of(2 * re01, -2 * im01, r00 - r11);
+}
 
 /** X, Y, Z as row-major `[re, im]` pairs. */
 const PAULI: number[][] = [

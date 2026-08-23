@@ -24,7 +24,7 @@ export const qft: Program = {
       kind: 'stepper',
       label: 'Register',
       min: 2,
-      max: 20,
+      max: 24,
       default: 3,
       unit: 'qubits',
       capByCeiling: true,

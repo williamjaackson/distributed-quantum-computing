@@ -17,9 +17,9 @@
  *   by choosing which shards survive; and only its off-diagonal summary element
  *   needs any traffic at all.
  */
-import { Prng, baseGates, planGate } from 'qsim';
+import { Prng, baseGates, planGate, reducedTwoOf } from 'qsim';
 import type { Backend, ShardLayout, Snapshot, SnapshotRequest } from './backend';
-import { formatBytes, TOP_K } from './backend';
+import { blochOf, formatBytes, pauliCorrelation, TOP_K } from './backend';
 import type { ShardInfo, ShardReq, ShardReqBody, ShardRes } from './shardProtocol';
 
 /** One decoded step of a planned gate. See `shard::encode_plan` in the engine. */
@@ -360,11 +360,34 @@ export class ShardedRegister implements Backend {
       top: flat,
       topTruncated: truncated,
       amps,
-      // A two-qubit reduced matrix straddling shards has no slice-local form and
-      // no engine kernel, so the sharded path reports no links rather than a
-      // guess. The dials are exact either way.
-      links: null,
+      // A pair straddling two shards has no slice-local reduced matrix, so links
+      // are only available once the amplitudes have been gathered — which the
+      // runner asks for while the register is small enough to be worth it. The
+      // arithmetic itself stays in the engine.
+      links: want.links && amps ? this.correlations(amps) : null,
     };
+  }
+
+  /**
+   * Connected Pauli correlation for every pair, from the gathered amplitudes.
+   *
+   * `reducedTwoOf` is the same engine function the two-qubit reduced matrix has
+   * always come from; it takes the array rather than a register, because a
+   * sharded run has the array and no register.
+   */
+  private correlations(amps: Float64Array): Float64Array {
+    const n = this.nQubits;
+    const out = new Float64Array(n * n);
+    const bloch: Float64Array[] = [];
+    for (let q = 0; q < n; q++) bloch.push(blochOf(amps, q));
+    for (let a = 0; a < n; a++) {
+      for (let b = a + 1; b < n; b++) {
+        const c = pauliCorrelation(reducedTwoOf(amps, a, b), bloch[a], bloch[b]);
+        out[a * n + b] = c;
+        out[b * n + a] = c;
+      }
+    }
+    return out;
   }
 
   /** Every amplitude, concatenated. Only ever asked for at tiny sizes. */

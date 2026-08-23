@@ -1,5 +1,4 @@
 import type { Analysis } from '../lib/analysis';
-import type { Execution } from '../lib/backend';
 import type { Frame, Timeline } from '../lib/types';
 
 export interface ViewProps {
@@ -8,8 +7,6 @@ export interface ViewProps {
   index: number;
   frame: Frame;
   analysis: Analysis;
-  /** How the register is being held, for views that start their own run. */
-  execution: Execution;
   onSeek: (index: number) => void;
 }
 

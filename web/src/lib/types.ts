@@ -273,14 +273,8 @@ export interface Frame {
 export interface Timeline {
   program: Program;
   values: InputValues;
-  /**
-   * Which shot the recorded frames are.
-   *
-   * Only meaningful for a circuit that measures: those collapse differently
-   * every run, so stepping through one of them means picking one. A unitary
-   * circuit is the same every time and this is always 0.
-   */
-  shotIndex: number;
+  /** The seed this run's measurements were drawn with. */
+  seed: number;
   nQubits: number;
   amplitudeCount: number;
   wireLabels: string[];

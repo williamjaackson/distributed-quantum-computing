@@ -29,7 +29,7 @@ export const deutschJozsa: Program = {
       kind: 'stepper',
       label: 'Input register',
       min: 1,
-      max: 24,
+      max: 28,
       default: 3,
       unit: 'qubits',
       capByCeiling: true,

@@ -10,9 +10,8 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { analyse, readRegister } from './lib/analysis';
-import type { Execution } from './lib/backend';
 import { engineLimitsIfReady, loadWasm } from './lib/backend';
-import { ceiling, runProgram } from './lib/runner';
+import { CEILING, runProgram } from './lib/runner';
 import { defaultValues } from './lib/inputs';
 import { ket } from './lib/format';
 import type { InputValue, InputValues, ProgramResult, ReadoutContext, Timeline } from './lib/types';
@@ -24,7 +23,7 @@ import { InputsPanel } from './components/InputsPanel';
 import { OutputsPanel } from './components/OutputsPanel';
 import { MeasurementPanel } from './components/MeasurementPanel';
 import { Transport } from './components/Transport';
-import { ExecutionPanel } from './components/ExecutionPanel';
+import { RegisterPanel } from './components/RegisterPanel';
 
 export function App() {
   const [ready, setReady] = useState(false);
@@ -33,11 +32,13 @@ export function App() {
   const [valuesById, setValuesById] = useState<Record<string, InputValues>>({});
   const [viewId, setViewId] = useState('qubits');
   const [shots, setShots] = useState(1024);
-  const [shotIndex, setShotIndex] = useState(0);
+  // A fresh seed is a fresh set of measurement draws. Rolled on mount and on
+  // every request to measure, so a coin flip is not the same flip every time —
+  // and *not* on an input change, so exploring a slider keeps one trajectory.
+  const [seed, setSeed] = useState(() => (Math.random() * 0x7fffffff) >>> 0);
   const [measureAtEnd, setMeasureAtEnd] = useState(false);
   const [readoutSource, setReadoutSource] = useState<'draw' | 'best'>('draw');
-  const [execution, setExecution] = useState<Execution>('auto');
-  const [unlocked, setUnlocked] = useState(false);
+
   const [timeline, setTimeline] = useState<Timeline | null>(null);
   const [progress, setProgress] = useState<number | null>(null);
 
@@ -82,10 +83,8 @@ export function App() {
     setProgress(0);
     let abandoned = false;
     void runProgram(program, values, {
-      execution,
-      unlocked,
       shots,
-      shotIndex,
+      seed,
       measureAtEnd,
       readoutSource,
       onProgress: (done: number) => {
@@ -100,7 +99,7 @@ export function App() {
     return () => {
       abandoned = true;
     };
-  }, [ready, program, values, shots, shotIndex, measureAtEnd, readoutSource, execution, unlocked]);
+  }, [ready, program, values, shots, seed, measureAtEnd, readoutSource]);
 
   const player = usePlayer(timeline?.frames.length ?? 1);
 
@@ -115,13 +114,11 @@ export function App() {
       // Measuring again has to give a *different* draw, or "the answer changes
       // every run" is a claim the app quietly contradicts. The shot index is
       // what seeds the trajectory, so advancing it is the redraw.
-      if (source === 'draw' && timeline.readout !== null) {
-        setShotIndex((i) => (i + 1) % Math.max(1, shots));
-      }
+      if (source === 'draw') setSeed((Math.random() * 0x7fffffff) >>> 0);
       setReadoutSource(source);
       setMeasureAtEnd(true);
     },
-    [timeline, shots],
+    [timeline],
   );
   useEffect(() => {
     if (timeline && resumeFrom.current !== null && timeline.readout !== null) {
@@ -136,7 +133,7 @@ export function App() {
   const resetPlayhead = player.reset;
   useEffect(() => {
     resetPlayhead();
-    setShotIndex(0);
+    setSeed((Math.random() * 0x7fffffff) >>> 0);
     setMeasureAtEnd(false);
     setReadoutSource('draw');
   }, [programId, resetPlayhead]);
@@ -292,53 +289,12 @@ export function App() {
             <InputsPanel
               specs={program.inputs}
               values={values}
-              qubitCeiling={ceiling(execution, unlocked, limits)}
+              qubitCeiling={CEILING}
               onChange={setValue}
             />
-            {timeline?.measurement.method === 'repeated' && (
-              <div className="field">
-                <div className="field-head">
-                  <span className="field-label">Watching shot</span>
-                  <span className="field-value">
-                    {shotIndex + 1} of {timeline.measurement.taken.toLocaleString()}
-                  </span>
-                </div>
-                <div className="stepper">
-                  <button
-                    className="btn"
-                    onClick={() => setShotIndex((i) => Math.max(0, i - 1))}
-                    disabled={shotIndex === 0}
-                    aria-label="Previous shot"
-                  >
-                    −
-                  </button>
-                  <button
-                    className="btn"
-                    onClick={() =>
-                      setShotIndex((i) => Math.min(timeline.measurement.taken - 1, i + 1))
-                    }
-                    disabled={shotIndex >= timeline.measurement.taken - 1}
-                    aria-label="Next shot"
-                  >
-                    +
-                  </button>
-                  <span className="field-hint">
-                    this circuit measures, so each run collapses differently — the frames are one of
-                    them
-                  </span>
-                </div>
-              </div>
-            )}
           </section>
 
-          <ExecutionPanel
-            execution={execution}
-            onExecution={setExecution}
-            unlocked={unlocked}
-            onUnlocked={setUnlocked}
-            timeline={timeline}
-            limits={limits}
-          />
+          <RegisterPanel timeline={timeline} limits={limits} />
         </aside>
 
         <main className="main">
@@ -365,6 +321,13 @@ export function App() {
               <h2>{view.name}</h2>
               <p>{view.subtitle}</p>
               <Info about={`the ${view.name.toLowerCase()} view`}>{view.about}</Info>
+              {timeline?.readout !== null && timeline && (
+                <span className={`showing${timeline.readoutSource === 'best' ? ' is-best' : ''}`}>
+                  {timeline.readoutSource === 'best'
+                    ? 'showing the best shot'
+                    : 'showing one draw'}
+                </span>
+              )}
             </div>
             <div className="stage-body">
               {timeline && frame && analysis ? (
@@ -373,7 +336,6 @@ export function App() {
                   index={frameIndex}
                   frame={frame}
                   analysis={analysis}
-                  execution={execution}
                   onSeek={player.seek}
                 />
               ) : (
