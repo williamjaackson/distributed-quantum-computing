@@ -39,7 +39,7 @@ engine.
 | ---- | -------- |
 | `lib/types.ts` | `Program`, `Step`, `Frame`, `Timeline` — the vocabulary |
 | `lib/steps.ts` | step constructors, and the gate arity table |
-| `lib/backend.ts` | the `Backend` interface and the whole-state implementation |
+| `lib/backend.ts` | the `Backend` interface, and the shard layout it builds |
 | `lib/shardedRegister.ts` | the sharded implementation, over workers |
 | `lib/runner.ts` | executes a program, records frames, budgets the detail |
 | `lib/analysis.ts` | presents a recorded frame to the views |
@@ -158,10 +158,17 @@ reason anyone takes more than one shot. For a repeated run there is no single
 final state to compare against, so the column is absent rather than invented.
 
 There is no seed control. A seed asks the reader to manage the one thing shots
-exist to average away; per-shot seeds are derived from the shot index, so the
-same inputs always give the same answer. What replaced it is more useful: for a
-circuit that measures, **"watching shot k of N"** — the frames are one
-trajectory out of N, and which one is now something you can say.
+exist to average away, so the run picks its own and rolls it every time you ask
+to measure. An earlier version derived it from a fixed index instead, in the
+name of reproducibility, and the result was a coin flip that came up heads on
+every fresh page load — the one thing a coin flip must not do. Reproducibility
+is not worth that.
+
+How many shots is a property of the algorithm, not a taste setting, so a program
+states its own default and most want the standard thousand. A sampling optimiser
+whose best outcome carries one part in a thousand of the distribution will miss
+it half the time at a thousand shots and report a worse one with a straight
+face; that is a budget, not a bug, and the program is what knows the difference.
 
 Readouts describe the end of the *circuit* — not the playhead, and not the end
 of the timeline. An answer that changes as you scrub is not an answer; and a
@@ -183,16 +190,25 @@ one:
 | Ceiling | Value | Set by |
 | ------- | ----- | ------ |
 | Whole amplitude array per frame | 14 qubits | 16 B × 2ⁿ × steps — 256 KiB a frame at 14 |
-| Comfortable stepping | 22 qubits | measured: ~10 ms a step at 16, 60 ms at 22, 250 ms at 24 |
+| Comfortable stepping | 22 qubits | measured: ~40 ms a step at 20, 180 ms at 24, 4.7 s at 28 |
 | One WASM module | 26 qubits | `isize::MAX` caps a single Rust allocation at 2 GiB |
-| Sharded | RAM | a module per worker, each with its own address space |
+| Register | 30 qubits | 16 shards × 1 GiB, and the machine has to have 16 GiB |
+
+Execution is always sharded. There used to be a setting choosing between a
+whole-state backend and a sharded one, and it was doing nothing useful: the
+sharded path is a superset, so the choice was between "shard" and "shard". With
+it went the qubit cap it was gating, because the limit is what the machine can
+allocate, not which mode you picked. 28 qubits is 4 shards of 1 GiB and takes
+about 131 s to step through a 28-gate circuit; 29 is 8 shards. The panel states
+the layout and the cost before you commit to it.
 
 Above 14 qubits a frame keeps a *summary* — the Bloch vectors, the largest
 amplitudes and the correlation matrix — which is everything a view draws, at
 kilobytes rather than megabytes. Those come from the engine's own
-`bloch_vector`, `top_amplitudes` and `reduced_two`, each one pass with no buffer
-proportional to the state, so they stay available at any size. Past 22 qubits is
-an explicit choice in the Execution panel, with the memory cost stated.
+`bloch_vector`, `top_amplitudes` and `reduced_two_of`, each one pass with no buffer
+proportional to the state, so they stay available at any size. Summarising is
+what actually costs: a frame needs one pass per qubit, so it grows as `n · 2ⁿ`
+and dominates the gates themselves by a factor of n.
 
 Grover is the one program whose limit is the *circuit*, not the register. A
 round is about `6n + 2` gates and the optimal round count grows as `sqrt(2^n)`,

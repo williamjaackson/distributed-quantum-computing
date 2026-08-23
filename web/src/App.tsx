@@ -11,7 +11,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { analyse, readRegister } from './lib/analysis';
 import { engineLimitsIfReady, loadWasm } from './lib/backend';
-import { CEILING, runProgram } from './lib/runner';
+import { CEILING, DEFAULT_SHOTS, runProgram } from './lib/runner';
 import { defaultValues } from './lib/inputs';
 import { ket } from './lib/format';
 import type { InputValue, InputValues, ProgramResult, ReadoutContext, Timeline } from './lib/types';
@@ -31,7 +31,7 @@ export function App() {
   const [programId, setProgramId] = useState(PROGRAMS[0].id);
   const [valuesById, setValuesById] = useState<Record<string, InputValues>>({});
   const [viewId, setViewId] = useState('qubits');
-  const [shots, setShots] = useState(1024);
+  const [shots, setShots] = useState(PROGRAMS[0].shots ?? DEFAULT_SHOTS);
   // A fresh seed is a fresh set of measurement draws. Rolled on mount and on
   // every request to measure, so a coin flip is not the same flip every time —
   // and *not* on an input change, so exploring a slider keeps one trajectory.
@@ -136,6 +136,7 @@ export function App() {
     setSeed((Math.random() * 0x7fffffff) >>> 0);
     setMeasureAtEnd(false);
     setReadoutSource('draw');
+    setShots(programById(programId).shots ?? DEFAULT_SHOTS);
   }, [programId, resetPlayhead]);
 
 
@@ -321,11 +322,12 @@ export function App() {
               <h2>{view.name}</h2>
               <p>{view.subtitle}</p>
               <Info about={`the ${view.name.toLowerCase()} view`}>{view.about}</Info>
-              {timeline?.readout !== null && timeline && (
+              {/* Only once the playhead is past the collapse. Scrub back into the
+                  circuit and you are looking at the superposition again, which is
+                  not a draw and must not be labelled as one. */}
+              {timeline && timeline.readout !== null && frameIndex > timeline.circuitSteps && (
                 <span className={`showing${timeline.readoutSource === 'best' ? ' is-best' : ''}`}>
-                  {timeline.readoutSource === 'best'
-                    ? 'showing the best shot'
-                    : 'showing one draw'}
+                  {timeline.readoutSource === 'best' ? 'showing the best shot' : 'showing one draw'}
                 </span>
               )}
             </div>

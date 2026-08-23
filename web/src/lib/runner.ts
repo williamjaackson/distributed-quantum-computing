@@ -66,6 +66,9 @@ export const SHOT_BUDGET = 4e8;
 /** Shot counts the UI offers. */
 export const SHOT_OPTIONS = [128, 1024, 8192, 65536];
 
+/** Shots for a program that does not ask for a particular number. */
+export const DEFAULT_SHOTS = 1024;
+
 /**
  * Seed for one shot of a run, derived from the run's own seed.
  *

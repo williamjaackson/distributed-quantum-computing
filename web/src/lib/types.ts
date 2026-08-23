@@ -196,6 +196,16 @@ export interface Program {
   detail: string;
   /** The view that shows this program off best. */
   suggestedView?: string;
+  /**
+   * Shots to take by default.
+   *
+   * How many shots an answer needs is a property of the algorithm, not a taste
+   * setting. A Bell pair is convincing in a hundred; a sampling optimiser whose
+   * optimum carries one part in a thousand of the amplitude will miss it half
+   * the time at a thousand shots, and report a worse allocation with a straight
+   * face. Programs that need more say so.
+   */
+  shots?: number;
   inputs: InputSpec[];
   qubits(values: InputValues): number;
   /** Human names for the wires, indexed by qubit. */
