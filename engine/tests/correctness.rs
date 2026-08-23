@@ -1084,3 +1084,28 @@ fn collapse_refuses_an_outcome_the_state_cannot_produce() {
     assert_close(sim.probabilities().unwrap()[0], 1.0, "state after a refused collapse");
     assert!(sim.collapse(5, 0).is_err(), "qubit out of range");
 }
+
+#[test]
+fn reduced_two_over_a_slice_matches_the_state_vector_form() {
+    // The sharded path has the amplitudes and no register, so it calls the slice
+    // form. It has to be the same arithmetic, not merely similar.
+    for n in 2..=5u32 {
+        let amps = random_state(n, 0x511CE + n as u64);
+        let sv = state_from(n, &amps);
+        for a in 0..n {
+            for b in 0..n {
+                if a == b {
+                    assert!(qsim::measure::reduced_two_of(&amps, a, b).is_err(), "a == b");
+                    continue;
+                }
+                let over_slice = qsim::measure::reduced_two_of(&amps, a, b).unwrap();
+                let over_state = qsim::measure::reduced_two(&sv, a, b).unwrap();
+                for (i, (x, y)) in over_slice.iter().zip(over_state.iter()).enumerate() {
+                    assert_close(*x, *y, &format!("rho[{i}] for ({a},{b}), n={n}"));
+                }
+            }
+        }
+    }
+    let amps = random_state(3, 7);
+    assert!(qsim::measure::reduced_two_of(&amps, 0, 3).is_err(), "qubit out of range");
+}

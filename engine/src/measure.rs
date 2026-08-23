@@ -120,13 +120,29 @@ pub fn bloch_vector(sv: &StateVector, qubit: u32) -> Result<[f64; 3], QsimError>
 pub fn reduced_two(sv: &StateVector, a: u32, b: u32) -> Result<[f64; 32], QsimError> {
     sv.check_qubit(a)?;
     sv.check_qubit(b)?;
+    reduced_two_of(sv.amps(), a, b)
+}
+
+/// [`reduced_two`] over a bare amplitude slice.
+///
+/// The same arithmetic without a `StateVector` to hold it, because a caller may
+/// have the amplitudes and no register — a sharded run reassembles them from its
+/// slices, and a pair straddling two shards has no slice-local form. Keeping one
+/// implementation and passing it the numbers beats a second copy that agrees
+/// only by inspection.
+pub fn reduced_two_of(amps: &[C], a: u32, b: u32) -> Result<[f64; 32], QsimError> {
     if a == b {
         return Err(QsimError::DuplicateQubit(a));
+    }
+    let n_qubits = amps.len().trailing_zeros();
+    for q in [a, b] {
+        if !amps.len().is_power_of_two() || q >= n_qubits {
+            return Err(QsimError::InvalidQubit { qubit: q, n_qubits });
+        }
     }
     let ba = 1usize << a;
     let bb = 1usize << b;
     let mut rho = [0.0f64; 32];
-    let amps = sv.amps();
     for (i, x) in amps.iter().enumerate() {
         if x.re == 0.0 && x.im == 0.0 {
             continue;

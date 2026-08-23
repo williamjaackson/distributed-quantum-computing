@@ -770,6 +770,24 @@ pub fn plan_gate(
     Ok(shard::encode_plan(&steps))
 }
 
+/// Two-qubit reduced density matrix over a raw amplitude array.
+///
+/// `amps` is `[re0, im0, re1, im1, ...]` for a power-of-two number of states.
+/// Sixteen interleaved `(re, im)` entries come back, row-major, with the
+/// subsystem index `bit_a + 2 * bit_b`.
+///
+/// This exists for the sharded path. A pair of qubits straddling two shards has
+/// no slice-local reduced matrix, so the orchestrator reassembles the amplitudes
+/// and asks here — which keeps one implementation of the arithmetic rather than
+/// a second copy in the caller that agrees only by inspection.
+#[wasm_bindgen(js_name = reducedTwoOf)]
+pub fn reduced_two_of(amps: Vec<f64>, a: u32, b: u32) -> Result<Vec<f64>, JsValue> {
+    let states: Vec<C> = amps.chunks_exact(2).map(|p| C::new(p[0], p[1])).collect();
+    measure::reduced_two_of(&states, a, b)
+        .map(|m| m.to_vec())
+        .map_err(js_err)
+}
+
 /// Uncontrolled gate names, indexed by the `base_id` a plan step carries.
 #[wasm_bindgen(js_name = baseGates)]
 pub fn base_gates() -> Vec<String> {
