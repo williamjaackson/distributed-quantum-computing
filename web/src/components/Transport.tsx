@@ -10,7 +10,7 @@
  * *measure*, because looking is a separate act from computing and a destructive
  * one — so it is asked for rather than assumed.
  */
-import { BASE_INTERVAL_MS, SPEEDS } from '../lib/usePlayer';
+import { intervalFor, MAX_SPEED, SPEEDS } from '../lib/usePlayer';
 import { describe, engineCall } from '../lib/format';
 import type { Step } from '../lib/types';
 
@@ -116,7 +116,7 @@ export function Transport(props: TransportProps) {
         >
           {SPEEDS.map((s) => (
             <option key={s} value={s}>
-              {s}× · {Math.round(BASE_INTERVAL_MS / s)} ms
+              {s === MAX_SPEED ? 'max' : `${s}×`} · {Math.round(intervalFor(s))} ms
             </option>
           ))}
         </select>
