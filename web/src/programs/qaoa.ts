@@ -244,6 +244,13 @@ export const qaoa: Program = {
     },
   ],
   qubits: () => QUBITS,
+  // Weighted unmet demand, with an over-budget allocation disqualified outright.
+  // This is what `tests/qaoa_module.rs` scans the histogram for, so the app can
+  // rank the shots the same way the engine's own test does.
+  score: (state) => {
+    const cost = objective(state);
+    return Number.isFinite(cost) ? cost : null;
+  },
   wireLabels: () =>
     CONSUMERS.flatMap((c) => c.qubits.map((q) => `${c.short} ${WATTS[q]}W`)),
   *build(v): Iterable<Step> {
@@ -268,19 +275,18 @@ export const qaoa: Program = {
     );
     yield* decodePlan(flat, penalties);
   },
-  outputs: ({ probabilityOf, shots, measurement }) => {
+  outputs: ({ probabilityOf, shots, measurement, bestShot }) => {
     const best = classicalBest();
     // The answer, the way `tests/qaoa_module.rs` defines it: the cheapest
     // allocation among the states actually sampled. QAOA is a sampler, not an
     // oracle — the likeliest outcome is usually mediocre, and reporting it as
-    // the result is how you end up presenting a wrong answer confidently.
-    let found: { state: number; cost: number } | null = null;
+    // the result is how you end up presenting a wrong answer confidently. The
+    // ranking comes from `score`, so the panel and the Best shot button cannot
+    // disagree about which allocation won.
+    const found = bestShot ? { state: bestShot.index, cost: bestShot.score } : null;
     let feasibleShots = 0;
     for (const o of shots) {
-      const cost = objective(o.index);
-      if (!Number.isFinite(cost)) continue;
-      feasibleShots += o.count;
-      if (!found || cost < found.cost) found = { state: o.index, cost };
+      if (Number.isFinite(objective(o.index))) feasibleShots += o.count;
     }
     const drawn = shots.reduce((a, o) => a + o.count, 0) || 1;
     const optimumHits = shots
@@ -308,6 +314,15 @@ export const qaoa: Program = {
         label: 'Optimum',
         value: CONSUMERS.map((c, i) => `${c.short} ${best.allocated[i]}`).join(' · '),
         hint: `${best.cost.toFixed(4)} unmet, by exhaustive search over the ${best.feasible.toLocaleString()} allocations within budget`,
+      },
+      {
+        label: 'Best shot ranked',
+        value: bestShot ? `${bestShot.rank} of ${shots.length}` : '—',
+        hint: bestShot
+          ? `by how often it came up — ${bestShot.count} time${
+              bestShot.count === 1 ? '' : 's'
+            }. The best allocation is rarely the likeliest one`
+          : 'nothing within budget was drawn',
       },
       {
         label: 'Shots that found it',

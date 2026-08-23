@@ -223,6 +223,12 @@ out **2.5× more likely** than an even draw; drag γ down to about 0.04 and it i
 **33×**. One round of QAOA is powerful and brittle at the same time, and a
 slider says that better than a paragraph.
 
+Pressing **Measure** here is instructive precisely because it disappoints: a
+draw scores around 9.4 against an optimum of 2.69, because the optimum holds
+0.1% of the probability and one sample is one sample. **Best shot** collapses
+onto the one that won — ranked around 400th by frequency, drawn once in a
+thousand. That gap is the whole character of the algorithm.
+
 The answer is the cheapest allocation **among the shots**, which is how
 `tests/qaoa_module.rs` defines it and not the same thing as the likeliest
 outcome. At the shipped angles the likeliest outcome leaves 10.92 of demand
