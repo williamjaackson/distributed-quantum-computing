@@ -37,7 +37,6 @@ export function App() {
   // and *not* on an input change, so exploring a slider keeps one trajectory.
   const [seed, setSeed] = useState(() => (Math.random() * 0x7fffffff) >>> 0);
   const [measureAtEnd, setMeasureAtEnd] = useState(false);
-  const [readoutSource, setReadoutSource] = useState<'draw' | 'best'>('draw');
 
   const [timeline, setTimeline] = useState<Timeline | null>(null);
   const [progress, setProgress] = useState<number | null>(null);
@@ -86,7 +85,6 @@ export function App() {
       shots,
       seed,
       measureAtEnd,
-      readoutSource,
       onProgress: (done: number) => {
         if (generation.current === mine) setProgress(done);
       },
@@ -99,7 +97,7 @@ export function App() {
     return () => {
       abandoned = true;
     };
-  }, [ready, program, values, shots, seed, measureAtEnd, readoutSource]);
+  }, [ready, program, values, shots, seed, measureAtEnd]);
 
   const player = usePlayer(timeline?.frames.length ?? 1);
 
@@ -107,19 +105,14 @@ export function App() {
   // be watched, so playback resumes from where the circuit ended rather than
   // letting the sticky-end jump straight past it.
   const resumeFrom = useRef<number | null>(null);
-  const requestMeasure = useCallback(
-    (source: 'draw' | 'best') => {
-      if (!timeline) return;
-      resumeFrom.current = timeline.circuitSteps;
-      // Measuring again has to give a *different* draw, or "the answer changes
-      // every run" is a claim the app quietly contradicts. The shot index is
-      // what seeds the trajectory, so advancing it is the redraw.
-      if (source === 'draw') setSeed((Math.random() * 0x7fffffff) >>> 0);
-      setReadoutSource(source);
-      setMeasureAtEnd(true);
-    },
-    [timeline],
-  );
+  const requestMeasure = useCallback(() => {
+    if (!timeline) return;
+    resumeFrom.current = timeline.circuitSteps;
+    // Measuring again takes a fresh set of shots, or "the answer changes every
+    // run" is a claim the app quietly contradicts. The seed is what draws them.
+    setSeed((Math.random() * 0x7fffffff) >>> 0);
+    setMeasureAtEnd(true);
+  }, [timeline]);
   useEffect(() => {
     if (timeline && resumeFrom.current !== null && timeline.readout !== null) {
       player.play(resumeFrom.current);
@@ -135,7 +128,6 @@ export function App() {
     resetPlayhead();
     setSeed((Math.random() * 0x7fffffff) >>> 0);
     setMeasureAtEnd(false);
-    setReadoutSource('draw');
     setShots(programById(programId).shots ?? DEFAULT_SHOTS);
   }, [programId, resetPlayhead]);
 
@@ -175,7 +167,7 @@ export function App() {
       switch (e.key) {
         case ' ':
           e.preventDefault();
-          if (player.atEnd && !player.playing && canMeasure) requestMeasure('draw');
+          if (player.atEnd && !player.playing && canMeasure) requestMeasure();
           else player.toggle();
           break;
         case 'ArrowRight':
@@ -363,13 +355,9 @@ export function App() {
             onStart={player.toStart}
             onEnd={player.toEnd}
             onSpeed={player.setSpeed}
-            onMeasure={canMeasure ? () => requestMeasure('draw') : undefined}
-            onBestShot={
-              canMeasure && timeline?.bestShot && timeline.readoutSource !== 'best'
-                ? () => requestMeasure('best')
-                : undefined
-            }
-            measured={timeline?.readout !== null && timeline?.readoutSource === 'draw'}
+            onMeasure={canMeasure ? requestMeasure : undefined}
+            ranked={timeline?.bestShot != null}
+            measured={timeline?.readout !== null}
           />
         </main>
 

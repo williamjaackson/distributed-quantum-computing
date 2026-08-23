@@ -64,10 +64,17 @@ export const MAX_STEPS = 2048;
 export const SHOT_BUDGET = 4e8;
 
 /** Shot counts the UI offers. */
-export const SHOT_OPTIONS = [128, 1024, 8192, 65536];
+/**
+ * Shot counts on offer.
+ *
+ * Nothing below 8192, because a smaller number is only ever a worse answer that
+ * looks exactly like a better one — the tail of a distribution is where these
+ * algorithms keep their answers, and a hundred draws cannot see it.
+ */
+export const SHOT_OPTIONS = [8192, 65536];
 
 /** Shots for a program that does not ask for a particular number. */
-export const DEFAULT_SHOTS = 1024;
+export const DEFAULT_SHOTS = 8192;
 
 /**
  * Seed for one shot of a run, derived from the run's own seed.
@@ -153,15 +160,6 @@ export interface RunOptions {
    */
   seed: number;
   /**
-   * Which outcome a readout should land on.
-   *
-   * `draw` measures, which is what a machine does. `best` replays the
-   * best-scoring shot — legitimate, because you did take those shots and keeping
-   * the best of them is how a sampling algorithm is used, but it is a selection
-   * among draws rather than a measurement, so it says so.
-   */
-  readoutSource: 'draw' | 'best';
-  /**
    * Read every qubit out at the end, collapsing the register.
    *
    * Off by default, because a readout is not part of an algorithm: it is the act
@@ -188,7 +186,7 @@ export async function runProgram(
   values: InputValues,
   options: RunOptions,
 ): Promise<Timeline> {
-  const { shots, seed, measureAtEnd, readoutSource } = options;
+  const { shots, seed, measureAtEnd } = options;
   const { onProgress, cancelled } = options;
   // Every limit below comes from the engine, so the module has to be up first.
   await loadWasm();
@@ -287,8 +285,12 @@ export async function runProgram(
   // and an entangled partner moves without being touched.
   let readout: number | null = null;
   const readoutBits: string[] = [];
-  const replay: number | null =
-    readoutSource === 'best' && bestShot !== null ? (bestShot as { index: number }).index : null;
+  // A readout lands on the best-scoring shot whenever the program ranks its
+  // outcomes, because that is how a sampling algorithm is actually used: you
+  // take the shots and you keep the best one. It is a selection among draws
+  // rather than a measurement, so `readoutSource` says which it was. A program
+  // with nothing to rank has only draws to offer, and gets one.
+  const replay: number | null = bestShot !== null ? (bestShot as { index: number }).index : null;
   if (backend && !error && measureAtEnd) {
     try {
       // `repeatRun` reset the register to take its shots, so put the trajectory

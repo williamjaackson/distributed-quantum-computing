@@ -121,17 +121,20 @@ separate button because looking is a separate act from computing, and a
 destructive one. A program that already measured everything itself is not
 offered it: there is nothing left to decide.
 
-Pressing it gives you **one draw**, which is what a machine gives you, and
-pressing it again gives you a *different* one — on a Bell pair, six presses gave
-\|11⟩ \|00⟩ \|11⟩ \|11⟩ \|00⟩ \|00⟩, always agreeing and never predictable. The
-panel says what that draw scored next to what the best of your shots scored —
-because one sample from a distribution where the answer has 0.1% of the
+Pressing it reads out **the best of the shots** whenever the program ranks its
+outcomes, and **one draw** when there is nothing to rank. That asymmetry is the
+whole point. One sample from a distribution where the answer holds 0.1% of the
 probability is almost always a poor one, and a collapsed register is the most
-prominent thing on screen. Beside it is **Best shot**, which collapses onto the
-best-scoring outcome the shots actually produced. That is a selection among
-draws rather than a measurement, so it says so; but keeping the best of a
-thousand runs is how a sampling algorithm is used, and it puts the answer in the
-register instead of only in a panel.
+prominent thing on screen — so a poor draw sitting in the register reads as the
+program's answer when it is nothing of the kind. Keeping the best of the shots
+is how a sampling algorithm is actually used: you take the shots, you score
+them, you keep the winner. It is a selection among draws rather than a
+measurement, so the badge over the view says which it was.
+
+This used to be a second button beside Measure, and having to know to press it
+was the bug. A coin flip has nothing to rank and still gives you a draw; six
+presses on a Bell pair gave \|11⟩ \|00⟩ \|11⟩ \|11⟩ \|00⟩ \|00⟩, always agreeing
+and never predictable. Pressing again takes a fresh set of shots either way.
 
 What "best" means is the program's business, not the app's: a program can
 implement `score(state, values)` — lower is better, `null` disqualifies — and
@@ -164,8 +167,13 @@ name of reproducibility, and the result was a coin flip that came up heads on
 every fresh page load — the one thing a coin flip must not do. Reproducibility
 is not worth that.
 
+The floor is 8,192 shots and the only other option is 65,536. Nothing smaller is
+offered, because a smaller number is not a faster answer — it is a worse one
+that looks exactly like a better one, and the tail of the distribution is where
+these algorithms keep their answers.
+
 How many shots is a property of the algorithm, not a taste setting, so a program
-states its own default and most want the standard thousand. A sampling optimiser
+states its own default and most want the floor. A sampling optimiser
 whose best outcome carries one part in a thousand of the distribution will miss
 it half the time at a thousand shots and report a worse one with a straight
 face; that is a budget, not a bug, and the program is what knows the difference.

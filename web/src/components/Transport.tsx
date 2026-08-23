@@ -31,9 +31,9 @@ interface TransportProps {
   onSpeed: (s: number) => void;
   /** Offered when the circuit has finished and nothing has read it out yet. */
   onMeasure?: () => void;
-  /** Offered alongside it when the program can say which shot was best. */
-  onBestShot?: () => void;
-  /** A draw has already been taken, so the offer is another one. */
+  /** The program ranks its outcomes, so measuring reads out the best of them. */
+  ranked?: boolean;
+  /** Something has been read out already, so the offer is another set of shots. */
   measured?: boolean;
 }
 
@@ -62,29 +62,22 @@ export function Transport(props: TransportProps) {
           <Icon shape="prev" />
         </button>
         {props.onMeasure && atEnd && !playing ? (
-          <>
-            <button
-              className="btn btn-measure"
-              onClick={props.onMeasure}
-              title={
-                props.measured
-                  ? 'Measure again — a different run, and a different draw'
+          <button
+            className="btn btn-measure"
+            onClick={props.onMeasure}
+            title={
+              props.ranked
+                ? props.measured
+                  ? 'Measure again — a fresh set of shots, and the best of those'
+                  : 'Measure the register (space) — collapses onto the best of the shots'
+                : props.measured
+                  ? 'Measure again — a fresh set of shots, and a different draw'
                   : 'Measure the register (space) — one draw, and it collapses'
-              }
-            >
-              <Icon shape="measure" />
-              {props.measured ? 'Measure again' : 'Measure'}
-            </button>
-            {props.onBestShot && (
-              <button
-                className="btn"
-                onClick={props.onBestShot}
-                title="Collapse onto the best-scoring outcome among the shots you took"
-              >
-                Best shot
-              </button>
-            )}
-          </>
+            }
+          >
+            <Icon shape="measure" />
+            {props.measured ? 'Measure again' : 'Measure'}
+          </button>
         ) : (
           <button
             className="btn btn-primary"
