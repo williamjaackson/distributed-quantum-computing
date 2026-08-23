@@ -91,8 +91,8 @@ nothing else in the app needs to know it exists.
 
 ## The views
 
-One at a time, deliberately — they are different ways of looking at the same
-amplitudes, and side by side they compete rather than combine.
+One at a time by default — they are different ways of looking at the same
+amplitudes, and two of them competing for the same glance is worse than one.
 
 | View | Shows | Good for |
 | ---- | ----- | -------- |
@@ -103,6 +103,31 @@ amplitudes, and side by side they compete rather than combine.
 | Complex plane | amplitudes as points | phase, exactly — the QFT's winding |
 
 There is deliberately no shots view — see below.
+
+The stage tiles, though, because *explaining* a view is not the same act as
+reading one: "the cost layer writes each allocation's shortfall into its phase
+and the bars do not move" is one claim about two pictures, and made against a
+single pane it is a claim about a picture that is no longer on screen. So a tab
+can be dragged into the stage — down the middle of a pane to sit beside it, near
+a top or bottom edge to sit above or below it — and dividers reweight what is
+open. Shift-clicking a tab does the same without the drag, and clicking one
+plainly still means "just this one", which is where every session starts.
+
+Each pane also has its own **scale** — a separate question from its size, and
+the more useful of the two for some views. A divider gives a pane more room; the
+scale gives the *view* more room in the room it has, which is what a Bloch sphere
+per qubit and a 278-gate circuit both actually want. It is CSS `zoom` rather than
+a transform, so the view underneath still measures a real box and lays itself out
+for it: at 60% the polarisation view fits more spheres per row rather than
+shrinking the picture it had.
+
+The model is rows of panes rather than a general split tree. Rows of panes
+covers every arrangement anyone asks for — two side by side, two stacked, a wide
+pair over a third — in a shape you can read straight off the state, where a tree
+needs a recursion to answer "what is next to what". The floor on a pane's size
+is deliberately small: a floor set to the width a view would like leaves so
+little travel between two panes that the divider reads as snapping between two
+positions, and a squeezed view scrolls rather than breaking.
 
 Probability and phase get two different encodings — height and angle — rather
 than one colour-coded bar. A phase is a direction, so a dial reads at a glance

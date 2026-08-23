@@ -30,7 +30,7 @@ export function ComplexPlaneView({ analysis }: ViewProps) {
   const { support, supportTruncated, nQubits, amplitudeCount } = analysis;
 
   const size =
-    Math.floor(Math.max(260, Math.min(width || 520, (height || 520) - 150)) / 8) * 8;
+    Math.floor(Math.max(220, Math.min(width || 520, (height || 520) - 150)) / 8) * 8;
   const cx = size / 2;
   const cy = size / 2;
   const R = size / 2 - PAD;

@@ -17,20 +17,21 @@ import { ket } from './lib/format';
 import type { InputValue, InputValues, ProgramResult, ReadoutContext, Timeline } from './lib/types';
 import { usePlayer } from './lib/usePlayer';
 import { PROGRAMS, programById } from './programs';
-import { VIEWS, viewById } from './views';
 import { Info } from './components/Info';
 import { InputsPanel } from './components/InputsPanel';
 import { OutputsPanel } from './components/OutputsPanel';
 import { MeasurementPanel } from './components/MeasurementPanel';
 import { Transport } from './components/Transport';
 import { RegisterPanel } from './components/RegisterPanel';
+import { useStageLayout, ViewStage } from './components/ViewStage';
 
 export function App() {
   const [ready, setReady] = useState(false);
   const [engineError, setEngineError] = useState<string | null>(null);
   const [programId, setProgramId] = useState(PROGRAMS[0].id);
   const [valuesById, setValuesById] = useState<Record<string, InputValues>>({});
-  const [viewId, setViewId] = useState('qubits');
+  // One pane, on the qubit map. The stage splits on request; see `ViewStage`.
+  const layout = useStageLayout('qubits');
   const [shots, setShots] = useState(PROGRAMS[0].shots ?? DEFAULT_SHOTS);
   // A fresh seed is a fresh set of measurement draws. Rolled on mount and on
   // every request to measure, so a coin flip is not the same flip every time —
@@ -67,11 +68,15 @@ export function App() {
     [programId, program],
   );
 
-  const chooseProgram = useCallback((id: string) => {
-    setProgramId(id);
-    const next = programById(id);
-    if (next.suggestedView) setViewId(next.suggestedView);
-  }, []);
+  const suggestView = layout.suggest;
+  const chooseProgram = useCallback(
+    (id: string) => {
+      setProgramId(id);
+      const next = programById(id);
+      if (next.suggestedView) suggestView(next.suggestedView);
+    },
+    [suggestView],
+  );
 
   // Runs are async and a fast input (a dragged slider) can outpace them, so each
   // one carries a generation number and only the newest is allowed to land.
@@ -218,7 +223,6 @@ export function App() {
     }
   }, [timeline, finalAnalysis, finalFrame, program]);
 
-  const view = viewById(viewId);
   const currentStep =
     timeline && frameIndex > 0 ? (timeline.steps[frameIndex - 1] ?? null) : null;
   const limits = ready ? engineLimitsIfReady() : null;
@@ -291,40 +295,23 @@ export function App() {
         </aside>
 
         <main className="main">
-          <div className="tabs">
-            {VIEWS.map((v) => (
-              <button
-                key={v.id}
-                className={`tab${program.suggestedView === v.id ? ' tab-suggested' : ''}`}
-                aria-pressed={v.id === viewId}
-                onClick={() => setViewId(v.id)}
-                title={
-                  program.suggestedView === v.id
-                    ? `${v.subtitle} — the best angle on ${program.name}`
-                    : v.subtitle
-                }
-              >
-                {v.name}
-              </button>
-            ))}
-          </div>
-
-          <section className="stage">
-            <div className="stage-head">
-              <h2>{view.name}</h2>
-              <p>{view.subtitle}</p>
-              <Info about={`the ${view.name.toLowerCase()} view`}>{view.about}</Info>
-              {/* Only once the playhead is past the collapse. Scrub back into the
-                  circuit and you are looking at the superposition again, which is
-                  not a draw and must not be labelled as one. */}
-              {timeline && timeline.readout !== null && frameIndex > timeline.circuitSteps && (
+          <ViewStage
+            layout={layout}
+            program={program}
+            badge={
+              /* Only once the playhead is past the collapse. Scrub back into the
+                 circuit and you are looking at the superposition again, which is
+                 not a draw and must not be labelled as one. Said once for the
+                 whole stage: it is a fact about the run, not about a view. */
+              timeline && timeline.readout !== null && frameIndex > timeline.circuitSteps ? (
                 <span className={`showing${timeline.readoutSource === 'best' ? ' is-best' : ''}`}>
                   {timeline.readoutSource === 'best' ? 'showing the best shot' : 'showing one draw'}
                 </span>
-              )}
-            </div>
-            <div className="stage-body">
-              {timeline && frame && analysis ? (
+              ) : null
+            }
+          >
+            {(view) =>
+              timeline && frame && analysis ? (
                 <view.Component
                   timeline={timeline}
                   index={frameIndex}
@@ -336,9 +323,9 @@ export function App() {
                 <div className="center">
                   {progress !== null ? `running the circuit… step ${progress}` : 'starting the engine…'}
                 </div>
-              )}
-            </div>
-          </section>
+              )
+            }
+          </ViewStage>
 
           <Transport
             index={player.index}

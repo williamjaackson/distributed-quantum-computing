@@ -44,7 +44,7 @@ export function QubitMapView({ timeline, index, analysis }: ViewProps) {
   // room available rather than the height its own contents just produced.
   // Quantised to 8px: a size that tracks the container pixel for pixel can
   // feed back into the container's own scroll state and never settle.
-  const size = quantise(clamp(Math.min(width || 520, (height || 520) - 120), 260, 640));
+  const size = quantise(clamp(Math.min(width || 520, (height || 520) - 120), 220, 640));
   const cx = size / 2;
   const cy = size / 2;
   // Cap the ring for a small register: two qubits at opposite ends of a wide
