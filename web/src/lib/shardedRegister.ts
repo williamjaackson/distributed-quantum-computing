@@ -17,7 +17,7 @@
  *   by choosing which shards survive; and only its off-diagonal summary element
  *   needs any traffic at all.
  */
-import { Prng, baseGates, planGate, reducedTwoOf } from 'qsim';
+import { Prng, baseGates, planGate, reducedTwoOf } from 'rock';
 import type { Backend, ShardLayout, Snapshot, SnapshotRequest } from './backend';
 import { blochOf, formatBytes, pauliCorrelation, TOP_K } from './backend';
 import type { ShardInfo, ShardReq, ShardReqBody, ShardRes } from './shardProtocol';

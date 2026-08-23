@@ -1,4 +1,4 @@
-use qsim::{
+use rock::{
     qaoa::{run_qaoa, EntitySpec, PenaltySpec, QaoaConfig},
     Simulator,
 };

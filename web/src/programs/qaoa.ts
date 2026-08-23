@@ -19,7 +19,7 @@
  * weights, the groupings and what makes one allocation better than another are
  * the caller's business. So they are the caller's business.
  */
-import { qaoaPlan, gateNames } from 'qsim';
+import { qaoaPlan, gateNames } from 'rock';
 import { GATE_CONTROLS } from '../lib/steps';
 import { num, str } from '../lib/inputs';
 import type { GateStep, Program, Step } from '../lib/types';

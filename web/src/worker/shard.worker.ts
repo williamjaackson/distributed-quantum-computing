@@ -9,8 +9,8 @@
 /// so does every summary: the worker calls `localReducedOne`, `localTop` and
 /// `dotScratch` rather than doing arithmetic over amplitudes itself.
 
-import init, { Shard } from 'qsim';
-import wasmUrl from 'qsim/qsim_bg.wasm?url';
+import init, { Shard } from 'rock';
+import wasmUrl from 'rock/rock_bg.wasm?url';
 import type { ShardInfo, ShardReq, ShardRes } from '../lib/shardProtocol';
 
 const ctx = globalThis as unknown as {

@@ -23,8 +23,8 @@ import init, {
   maxQubits,
   maxShardQubits,
   planShards,
-} from 'qsim';
-import wasmUrl from 'qsim/qsim_bg.wasm?url';
+} from 'rock';
+import wasmUrl from 'rock/rock_bg.wasm?url';
 import { ShardedRegister } from './shardedRegister';
 
 /** Basis states kept per frame when the whole distribution is out of reach. */

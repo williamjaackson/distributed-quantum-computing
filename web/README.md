@@ -1,4 +1,4 @@
-# qsim visualiser
+# rock visualiser
 
 A step-through view of the engine. Pick a program, feed it inputs, and watch
 the register from whichever angle answers the question.

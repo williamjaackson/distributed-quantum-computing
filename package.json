@@ -1,5 +1,5 @@
 {
-  "name": "quantum-computing",
+  "name": "rock",
   "private": true,
   "scripts": {
     "build:wasm": "engine/build.sh",

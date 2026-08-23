@@ -1,4 +1,4 @@
-# Quantum Computing Simulation Engine
+# ROCK
 
 A quantum circuit state-vector simulator written in Rust, compiled to
 WebAssembly, and driven from the browser.

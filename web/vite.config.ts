@@ -42,10 +42,10 @@ function signalingRelay(): Plugin {
 
 export default defineConfig({
   plugins: [react(), signalingRelay()],
-  // `qsim` is a wasm-pack output linked with `file:`. Excluding it from dep
-  // pre-bundling keeps the generated `new URL('qsim_bg.wasm', import.meta.url)`
+  // `rock` is a wasm-pack output linked with `file:`. Excluding it from dep
+  // pre-bundling keeps the generated `new URL('rock_bg.wasm', import.meta.url)`
   // pointing at the real file instead of an esbuild-rewritten copy.
-  optimizeDeps: { exclude: ['qsim'] },
+  optimizeDeps: { exclude: ['rock'] },
   // Listen on the LAN, not just localhost — a share link is for other machines.
   server: { host: true },
   preview: { host: true },

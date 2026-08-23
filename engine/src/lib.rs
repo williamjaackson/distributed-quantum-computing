@@ -1,8 +1,8 @@
-//! `qsim` — a quantum circuit state-vector simulator for the browser.
+//! `rock` — a quantum circuit state-vector simulator for the browser.
 //!
 //! The API comes in two layers:
 //!
-//! * [`Simulator`] is plain Rust and returns [`QsimError`]. All the behaviour
+//! * [`Simulator`] is plain Rust and returns [`RockError`]. All the behaviour
 //!   lives here, so `cargo test` on the host exercises the real code paths —
 //!   including the error paths.
 //! * [`JsSimulator`] is a thin `wasm-bindgen` wrapper that renames methods to
@@ -25,7 +25,7 @@ pub mod state;
 
 use complex::C;
 use rng::Rng;
-use state::{QsimError, StateVector};
+use state::{RockError, StateVector};
 use wasm_bindgen::prelude::*;
 
 pub use dispatch::GATE_NAMES;
@@ -44,7 +44,7 @@ impl Simulator {
     ///
     /// Returns `Err` rather than panicking when the allocation is refused, so the
     /// capacity probe can walk `n` upward and catch the ceiling.
-    pub fn new(n_qubits: u32) -> Result<Simulator, QsimError> {
+    pub fn new(n_qubits: u32) -> Result<Simulator, RockError> {
         Ok(Simulator {
             sv: StateVector::try_new(n_qubits)?,
             rng: Rng::new(0x5EED),
@@ -77,7 +77,7 @@ impl Simulator {
         name: &str,
         qubits: &[u32],
         params: &[f64],
-    ) -> Result<(), QsimError> {
+    ) -> Result<(), RockError> {
         dispatch::apply_named(&mut self.sv, name, qubits, params)
     }
 
@@ -86,24 +86,24 @@ impl Simulator {
         self.sv.norm()
     }
 
-    pub fn probabilities(&self) -> Result<Vec<f64>, QsimError> {
+    pub fn probabilities(&self) -> Result<Vec<f64>, RockError> {
         measure::probabilities(&self.sv)
     }
 
-    pub fn amplitudes(&self) -> Result<Vec<f64>, QsimError> {
+    pub fn amplitudes(&self) -> Result<Vec<f64>, RockError> {
         measure::amplitudes_flat(&self.sv)
     }
 
-    pub fn probability_of_one(&self, qubit: u32) -> Result<f64, QsimError> {
+    pub fn probability_of_one(&self, qubit: u32) -> Result<f64, RockError> {
         measure::probability_of_one(&self.sv, qubit)
     }
 
-    pub fn expectation_z(&self, qubit: u32) -> Result<f64, QsimError> {
+    pub fn expectation_z(&self, qubit: u32) -> Result<f64, RockError> {
         measure::expectation_z(&self.sv, qubit)
     }
 
     /// Bloch vector of one qubit: `[<X>, <Y>, <Z>]`. Streams, so any register size.
-    pub fn bloch_vector(&self, qubit: u32) -> Result<[f64; 3], QsimError> {
+    pub fn bloch_vector(&self, qubit: u32) -> Result<[f64; 3], RockError> {
         measure::bloch_vector(&self.sv, qubit)
     }
 
@@ -113,17 +113,17 @@ impl Simulator {
     }
 
     /// Two-qubit reduced density matrix; see [`measure::reduced_two`].
-    pub fn reduced_two(&self, a: u32, b: u32) -> Result<[f64; 32], QsimError> {
+    pub fn reduced_two(&self, a: u32, b: u32) -> Result<[f64; 32], RockError> {
         measure::reduced_two(&self.sv, a, b)
     }
 
     /// Measure one qubit, collapsing the state onto the observed outcome.
-    pub fn measure(&mut self, qubit: u32) -> Result<u8, QsimError> {
+    pub fn measure(&mut self, qubit: u32) -> Result<u8, RockError> {
         measure::measure(&mut self.sv, qubit, &mut self.rng)
     }
 
     /// Collapse one qubit onto a given outcome; see [`measure::collapse`].
-    pub fn collapse(&mut self, qubit: u32, outcome: u8) -> Result<(), QsimError> {
+    pub fn collapse(&mut self, qubit: u32, outcome: u8) -> Result<(), RockError> {
         measure::collapse(&mut self.sv, qubit, outcome)
     }
 
@@ -144,25 +144,25 @@ impl Simulator {
         bench::bench_layers(&mut self.sv, layers)
     }
 
-    pub fn prepare_uniform(&mut self) -> Result<(), QsimError> {
+    pub fn prepare_uniform(&mut self) -> Result<(), RockError> {
         circuits::uniform(&mut self.sv)
     }
 
-    pub fn prepare_bell(&mut self) -> Result<(), QsimError> {
+    pub fn prepare_bell(&mut self) -> Result<(), RockError> {
         circuits::bell(&mut self.sv)
     }
 
-    pub fn prepare_ghz(&mut self) -> Result<(), QsimError> {
+    pub fn prepare_ghz(&mut self) -> Result<(), RockError> {
         circuits::ghz(&mut self.sv)
     }
 
-    pub fn apply_qft(&mut self) -> Result<(), QsimError> {
+    pub fn apply_qft(&mut self) -> Result<(), RockError> {
         circuits::qft(&mut self.sv)
     }
 
     /// Run Grover's search for `marked`. A negative `iterations` selects the
     /// optimal count. Returns the iterations performed.
-    pub fn run_grover(&mut self, marked: usize, iterations: i32) -> Result<u32, QsimError> {
+    pub fn run_grover(&mut self, marked: usize, iterations: i32) -> Result<u32, RockError> {
         let iters = if iterations < 0 {
             circuits::grover_iterations(self.sv.n_qubits())
         } else {
@@ -174,15 +174,15 @@ impl Simulator {
 
     /// Teleport `U3(theta, phi, 0)|0>` from qubit 0 to qubit 2. Returns the two
     /// measured correction bits.
-    pub fn teleport(&mut self, theta: f64, phi: f64) -> Result<(u8, u8), QsimError> {
+    pub fn teleport(&mut self, theta: f64, phi: f64) -> Result<(u8, u8), RockError> {
         circuits::teleport(&mut self.sv, theta, phi, &mut self.rng)
     }
 
     /// Collapse the register onto a single basis state — the usual starting point
     /// for checking a transform against its analytic form.
-    pub fn set_basis_state(&mut self, index: usize) -> Result<(), QsimError> {
+    pub fn set_basis_state(&mut self, index: usize) -> Result<(), RockError> {
         if index >= self.sv.len() {
-            return Err(QsimError::InvalidQubit {
+            return Err(RockError::InvalidQubit {
                 qubit: index as u32,
                 n_qubits: self.sv.n_qubits(),
             });
@@ -206,7 +206,7 @@ impl Simulator {
 // JsSimulator — wasm-bindgen wrapper, no logic of its own
 // ---------------------------------------------------------------------------
 
-fn js_err(e: QsimError) -> JsValue {
+fn js_err(e: RockError) -> JsValue {
     JsValue::from_str(&e.to_string())
 }
 
@@ -744,7 +744,7 @@ impl JsShard {
     /// Probabilities across this slice. Guarded like the whole-state version.
     pub fn probabilities(&self) -> Result<Vec<f64>, JsValue> {
         if self.inner.local_qubits() > measure::FULL_ARRAY_QUBIT_LIMIT {
-            return Err(js_err(QsimError::TooLargeForOperation {
+            return Err(js_err(RockError::TooLargeForOperation {
                 n_qubits: self.inner.local_qubits(),
                 limit: measure::FULL_ARRAY_QUBIT_LIMIT,
             }));

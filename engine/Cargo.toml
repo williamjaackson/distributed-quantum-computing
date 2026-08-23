@@ -1,5 +1,5 @@
 [package]
-name = "qsim"
+name = "rock"
 version = "0.1.0"
 edition = "2021"
 description = "Quantum circuit state-vector simulator for the browser (WASM)"

@@ -7,10 +7,10 @@
 use crate::complex::C;
 use crate::gates::{apply, apply_controlled, apply_swap, Gate};
 use crate::rng::Rng;
-use crate::state::{QsimError, StateVector};
+use crate::state::{RockError, StateVector};
 
 /// Hadamard on every qubit: the uniform superposition over all 2^n states.
-pub fn uniform(sv: &mut StateVector) -> Result<(), QsimError> {
+pub fn uniform(sv: &mut StateVector) -> Result<(), RockError> {
     for q in 0..sv.n_qubits() {
         apply(sv, Gate::H, q)?;
     }
@@ -18,14 +18,14 @@ pub fn uniform(sv: &mut StateVector) -> Result<(), QsimError> {
 }
 
 /// Bell pair on qubits 0 and 1: (|00> + |11>)/sqrt(2).
-pub fn bell(sv: &mut StateVector) -> Result<(), QsimError> {
+pub fn bell(sv: &mut StateVector) -> Result<(), RockError> {
     apply(sv, Gate::H, 0)?;
     apply_controlled(sv, Gate::X, &[0], 1)?;
     Ok(())
 }
 
 /// GHZ state across all qubits: (|00...0> + |11...1>)/sqrt(2).
-pub fn ghz(sv: &mut StateVector) -> Result<(), QsimError> {
+pub fn ghz(sv: &mut StateVector) -> Result<(), RockError> {
     apply(sv, Gate::H, 0)?;
     for q in 1..sv.n_qubits() {
         apply_controlled(sv, Gate::X, &[q - 1], q)?;
@@ -38,7 +38,7 @@ pub fn ghz(sv: &mut StateVector) -> Result<(), QsimError> {
 /// Hadamard on the top qubit, then controlled phase rotations of decreasing
 /// angle from each lower qubit, working downward; a final layer of swaps undoes
 /// the bit reversal the recursion leaves behind.
-pub fn qft(sv: &mut StateVector) -> Result<(), QsimError> {
+pub fn qft(sv: &mut StateVector) -> Result<(), RockError> {
     let n = sv.n_qubits();
     for j in (0..n).rev() {
         apply(sv, Gate::H, j)?;
@@ -58,10 +58,10 @@ pub fn qft(sv: &mut StateVector) -> Result<(), QsimError> {
 /// Applied directly to the amplitude array: an oracle is a black box by
 /// definition, and decomposing it into gates would only add cost without
 /// exercising anything the gate kernels do not already cover.
-pub fn phase_oracle(sv: &mut StateVector, marked: usize) -> Result<(), QsimError> {
+pub fn phase_oracle(sv: &mut StateVector, marked: usize) -> Result<(), RockError> {
     let len = sv.len();
     if marked >= len {
-        return Err(QsimError::InvalidQubit {
+        return Err(RockError::InvalidQubit {
             qubit: marked as u32,
             n_qubits: sv.n_qubits(),
         });
@@ -83,7 +83,7 @@ pub fn grover_iterations(n_qubits: u32) -> u32 {
 /// Each iteration is oracle + diffusion, where diffusion is
 /// `H^n (2|0><0| - I) H^n`. The `(2|0><0| - I)` reflection is implemented as a
 /// sign flip on every state except |0...0>.
-pub fn grover(sv: &mut StateVector, marked: usize, iterations: u32) -> Result<(), QsimError> {
+pub fn grover(sv: &mut StateVector, marked: usize, iterations: u32) -> Result<(), RockError> {
     uniform(sv)?;
     for _ in 0..iterations {
         phase_oracle(sv, marked)?;
@@ -106,9 +106,9 @@ pub fn teleport(
     theta: f64,
     phi: f64,
     rng: &mut Rng,
-) -> Result<(u8, u8), QsimError> {
+) -> Result<(u8, u8), RockError> {
     if sv.n_qubits() < 3 {
-        return Err(QsimError::WrongArity {
+        return Err(RockError::WrongArity {
             gate: "teleport".into(),
             expected: 3,
             got: sv.n_qubits() as usize,

@@ -401,7 +401,7 @@ export function App() {
     <div className="app">
       <header className="topbar">
         <div className="brand">
-          qsim<span>quantum circuit visualiser</span>
+          ROCK<span>quantum circuit visualiser</span>
         </div>
         <div className="chips">
           {viewer && <span className="chip">watching room {session.room}</span>}
@@ -500,6 +500,7 @@ export function App() {
                   frame={frame}
                   analysis={analysis}
                   onSeek={viewer ? () => {} : player.seek}
+                  onCircuitChange={program.id === 'builder' ? (value) => setValue('circuit', value) : undefined}
                 />
               ) : (
                 <div className="center">

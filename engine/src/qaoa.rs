@@ -10,7 +10,7 @@
 //! ```rust
 //! use std::collections::HashMap;
 //!
-//! use qsim::{
+//! use rock::{
 //!     qaoa::{run_qaoa, EntitySpec, PenaltySpec, QaoaConfig},
 //!     Simulator,
 //! };

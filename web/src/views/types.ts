@@ -1,5 +1,6 @@
 import type { Analysis } from '../lib/analysis';
 import type { Frame, Timeline } from '../lib/types';
+import type { InputValue } from '../lib/types';
 
 export interface ViewProps {
   timeline: Timeline;
@@ -8,6 +9,8 @@ export interface ViewProps {
   frame: Frame;
   analysis: Analysis;
   onSeek: (index: number) => void;
+  /** Present for editable programs whose circuit is authored in this view. */
+  onCircuitChange?: (value: InputValue) => void;
 }
 
 export interface ViewDef {
