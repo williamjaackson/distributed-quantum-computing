@@ -20,6 +20,7 @@ import { describe, gateLabel } from '../lib/format';
 import type { GateStep, Step } from '../lib/types';
 import { useTip } from '../components/Tooltip';
 import type { ViewProps } from './types';
+import { CircuitBuilder } from '../components/CircuitBuilder';
 
 const COL = 54;
 const GUTTER = 96;
@@ -27,7 +28,7 @@ const ROW = 42;
 const TOP = 34;
 const PAD_RIGHT = 24;
 
-export function CircuitView({ timeline, index, onSeek }: ViewProps) {
+export function CircuitView({ timeline, index, onSeek, onCircuitChange }: ViewProps) {
   const { steps, nQubits, wireLabels } = timeline;
   const { bind, node } = useTip();
   const scroller = useRef<HTMLDivElement>(null);
@@ -54,7 +55,11 @@ export function CircuitView({ timeline, index, onSeek }: ViewProps) {
   const stages = groupStages(steps);
 
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: `${GUTTER}px minmax(0, 1fr)` }}>
+    <div className="circuit-view">
+      {onCircuitChange && (
+        <CircuitBuilder value={timeline.values.circuit} onChange={onCircuitChange} />
+      )}
+      <div className="circuit-diagram" style={{ display: 'grid', gridTemplateColumns: `${GUTTER}px minmax(0, 1fr)` }}>
       {/* Fixed gutter: the wire names, which must not scroll away. */}
       <svg width={GUTTER} height={height} aria-hidden>
         {Array.from({ length: nQubits }, (_, q) => (
@@ -173,6 +178,7 @@ export function CircuitView({ timeline, index, onSeek }: ViewProps) {
         </svg>
       </div>
       {node}
+      </div>
     </div>
   );
 }

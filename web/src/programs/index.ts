@@ -19,8 +19,10 @@ import { grover } from './grover';
 import { qft } from './qft';
 import { adder } from './adder';
 import { qaoa } from './qaoa';
+import { builder } from './builder';
 
 export const PROGRAMS: Program[] = [
+  builder,
   coin,
   interference,
   bell,
