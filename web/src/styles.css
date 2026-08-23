@@ -236,6 +236,17 @@ button {
 
 /* ---------- the stage ---------- */
 
+.stage-wrap {
+  position: relative;
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+}
+
+.stage-wrap > .stage-split {
+  flex: 1;
+}
+
 /* One pane, or a stack of rows of them. Flex rather than a grid because the
    dividers and the drop marker are siblings of the panes, and a template that
    had to be rewritten as a marker appeared and vanished is a template that
@@ -423,13 +434,21 @@ button {
    looks exactly like an answer and is not one. Said here because it is the same
    caveat whichever view you are on. */
 .showing {
-  margin-left: auto;
   font-size: 11px;
   color: var(--orange);
   border: 1px solid var(--orange);
   border-radius: 999px;
   padding: 0 8px;
   white-space: nowrap;
+}
+
+.stage-badge-row {
+  position: absolute;
+  z-index: 2;
+  top: 8px;
+  left: 50%;
+  transform: translateX(-50%);
+  pointer-events: none;
 }
 
 .showing.is-best {
@@ -1140,14 +1159,6 @@ svg text.mono {
   text-align: right;
 }
 
-.capacity-details {
-  margin-top: 10px;
-}
-
-.capacity-details summary {
-  cursor: pointer;
-  color: var(--muted);
-}
 
 .session-room strong {
   font-family: var(--mono);

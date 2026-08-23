@@ -107,6 +107,18 @@ class FakeMesh extends Emitter {
     const copy = JSON.parse(JSON.stringify(message));
     queueMicrotask(() => other.emit('ctrl-message', { peerId: this.selfId, message: copy }));
   }
+  sendBulk(peerId, buffer) {
+    const transferId = this.bulkId = (this.bulkId ?? 0) + 1;
+    const bytes = buffer instanceof ArrayBuffer
+      ? buffer.slice(0)
+      : buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength);
+    const other = this.hub.meshes.get(peerId);
+    queueMicrotask(() => other.emit('bulk-message', { peerId: this.selfId, transferId, buffer: bytes }));
+    return transferId;
+  }
+  connectedPeerIds() {
+    return [...this.hub.meshes.keys()].filter((id) => id !== this.selfId);
+  }
 }
 
 function pair(hub) {
@@ -187,6 +199,35 @@ test('a work request runs on the viewer and its histogram comes back', async () 
   assert.deepEqual(seen, [{ programId: 'ghz', values: {}, shots: 100, seed: 7 }]);
   assert.equal(viewer.contributed, 100);
   assert.equal(viewer.working, null); // cleared once done
+});
+
+test('expand shard commands move blocks over the binary channel', async () => {
+  const { host, viewer } = await hostAndViewer(makeHub());
+  let imported = null;
+  viewer.setShardWorker(async (slot, req) => {
+    assert.equal(slot, 3);
+    if (req.kind === 'exportBlock') return new Float64Array([1.5, -2.25]);
+    if (req.kind === 'importDot') {
+      imported = Array.from(new Float64Array(req.buffer));
+      return [7, 8];
+    }
+    return null;
+  });
+
+  const exported = await host.runShard(0, 3, { kind: 'exportBlock', block: 0 });
+  assert.deepEqual(Array.from(exported), [1.5, -2.25]);
+
+  const buffer = new Float64Array([3, 4]).buffer;
+  const dot = await host.runShard(0, 3, { kind: 'importDot', block: 0, buffer });
+  assert.deepEqual(imported, [3, 4]);
+  assert.deepEqual(dot, [7, 8]);
+});
+
+test('helpers advertise more than one GiB of expand memory', async () => {
+  const { host, viewer } = await hostAndViewer(makeHub());
+  viewer.setMemoryGiB(4);
+  await settle();
+  assert.equal(host.expandParticipants()[1].memoryGiB, 4);
 });
 
 test('a worker that throws rejects the host call with its message', async () => {

@@ -22,13 +22,15 @@
  */
 import type { Measurement } from '../lib/types';
 import type { ShotOutcome } from '../lib/types';
+import type { ShardReqBody } from '../lib/shardProtocol';
+import type { PlanStep } from '../lib/shardedRegister';
 import type { CtrlMessage, MeshEvents } from './mesh';
 import { PeerMesh } from './mesh';
 import { PeerRpc, respondTo } from './rpc';
 import type { SignalingEvents } from './signaling-client';
 import { SignalingClient } from './signaling-client';
 import type { BestShot, SharedResult, SharedStageLayout, SharedState, WorkReply, WorkRequest } from './protocol';
-import { runKey, WORK_SHOTS } from './protocol';
+import { runKey, WORK_SHARD, WORK_SHOTS } from './protocol';
 import { flatFromOutcomes, RESULT_OUTCOME_CAP } from './shots';
 
 export type SessionRole = 'solo' | 'host' | 'viewer';
@@ -53,6 +55,17 @@ export type SessionWorker = (
   },
 ) => Promise<WorkReply>;
 
+export type SessionShardWorker = (
+  slot: number,
+  req: ShardReqBody | { kind: 'release' },
+) => Promise<unknown>;
+export type SessionShardPairWorker = (
+  lowSlot: number,
+  highSlot: number,
+  step: PlanStep,
+  blocks: number,
+) => Promise<number>;
+
 // The narrow surfaces the session needs, so tests can inject an in-memory
 // fabric instead of real WebSockets and RTCPeerConnections.
 export interface SignalingLike {
@@ -70,6 +83,8 @@ export interface SignalingLike {
 export interface MeshLike {
   connectTo(peerId: string): void;
   sendCtrl(peerId: string, message: CtrlMessage): void;
+  sendBulk(peerId: string, buffer: ArrayBuffer | ArrayBufferView): number;
+  connectedPeerIds?(): string[];
   on<K extends keyof MeshEvents & string>(type: K, fn: (detail: MeshEvents[K]) => void): () => void;
 }
 
@@ -110,6 +125,8 @@ export class Session {
   /** Shots this machine has contributed to the host, over the session. */
   contributed = 0;
   hostLost = false;
+  /** Memory this browser is willing to devote to Expand shard workers. */
+  memoryGiB = 1;
 
   #transport: SessionTransport;
   #signalUrl: string | null;
@@ -119,6 +136,15 @@ export class Session {
   #rpcs = new Map<string, PeerRpc>();
   #hostId: string | null = null;
   #worker: SessionWorker | null = null;
+  #shardWorker: SessionShardWorker | null = null;
+  #shardPairWorker: SessionShardPairWorker | null = null;
+  #hostedSlots = new Set<number>();
+  #capacities = new Map<string, number>();
+  #bulkReady = new Map<string, ArrayBuffer>();
+  #bulkWaiters = new Map<
+    string,
+    { resolve: (buffer: ArrayBuffer) => void; reject: (error: Error) => void; timer: ReturnType<typeof setTimeout> }
+  >();
   #workGen = 0;
   /** Last message of each kind, replayed to peers that connect later. */
   #lastCast = new Map<string, CtrlMessage>();
@@ -181,6 +207,7 @@ export class Session {
       mesh.on('peer-connected', ({ peerId: id }) => {
         this.#ready.push(id);
         this.#rpcs.set(id, new PeerRpc(mesh, id));
+        this.#capacities.set(id, 1);
         // A late joiner needs to know what is running right now, not wait for
         // the host to change something.
         for (const msg of this.#lastCast.values()) {
@@ -192,10 +219,14 @@ export class Session {
         }
         this.#bump();
       });
+      mesh.on('ctrl-message', ({ peerId: from, message }) => this.#onCtrl(from, message));
+      mesh.on('bulk-message', (detail) => this.#onBulk(detail));
       mesh.on('peer-disconnected', ({ peerId: id }) => {
         this.#ready = this.#ready.filter((p) => p !== id);
         this.#rpcs.get(id)?.rejectAllPending(new Error(`the machine helping with this share disconnected`));
         this.#rpcs.delete(id);
+        this.#capacities.delete(id);
+        this.#dropBulkPeer(id);
         this.#bump();
       });
 
@@ -217,12 +248,81 @@ export class Session {
     return this.role === 'host' ? this.#ready.length : 0;
   }
 
+  setMemoryGiB(value: number): void {
+    this.memoryGiB = Math.min(16, Math.max(0.25, value));
+    if (this.role === 'viewer' && this.#mesh) {
+      for (const id of this.#mesh.connectedPeerIds?.() ?? []) {
+        try {
+          this.#mesh.sendCtrl(id, { t: 'capacity', memoryGiB: this.memoryGiB });
+        } catch {
+          // A closing channel will be removed by its disconnect event.
+        }
+      }
+    }
+    this.#bump();
+  }
+
+  expandParticipants(): Array<{ id: string; worker: number | null; memoryGiB: number }> {
+    if (this.role !== 'host') return [];
+    return [
+      { id: 'host', worker: null, memoryGiB: this.memoryGiB },
+      ...this.#ready.map((id, worker) => ({
+        id,
+        worker,
+        memoryGiB: this.#capacities.get(id) ?? 1,
+      })),
+    ];
+  }
+
   /** Ask helper `worker` (an index into the current helpers) for shots. */
   runShots(worker: number, req: WorkRequest): Promise<WorkReply> {
     const id = this.#ready[worker];
     const rpc = id === undefined ? undefined : this.#rpcs.get(id);
     if (!rpc) return Promise.reject(new Error('helper left before starting'));
     return rpc.call<WorkReply>(WORK_SHOTS, req as unknown as Record<string, unknown>);
+  }
+
+  /** Execute a shard command on one slot owned by a connected helper. */
+  async runShard(worker: number, slot: number, req: ShardReqBody): Promise<unknown> {
+    const peerId = this.#ready[worker];
+    const rpc = peerId === undefined ? undefined : this.#rpcs.get(peerId);
+    if (!peerId || !rpc || !this.#mesh) throw new Error('expand helper left before the shard command');
+
+    if (req.kind === 'exportBlock') {
+      const reply = await rpc.call<{ bulkTransferId: number }>(WORK_SHARD, { slot, req });
+      const buffer = await this.#waitBulk(peerId, reply.bulkTransferId);
+      return new Float64Array(buffer);
+    }
+
+    if (req.kind === 'importApply' || req.kind === 'importDot') {
+      const bulkTransferId = this.#mesh.sendBulk(peerId, req.buffer);
+      const { buffer: _buffer, ...withoutBuffer } = req;
+      return rpc.call(WORK_SHARD, { slot, req: withoutBuffer, bulkTransferId });
+    }
+    return rpc.call(WORK_SHARD, { slot, req });
+  }
+
+  releaseRemoteShard(worker: number, slot: number): void {
+    const peerId = this.#ready[worker];
+    const rpc = peerId === undefined ? undefined : this.#rpcs.get(peerId);
+    if (rpc) void rpc.call(WORK_SHARD, { slot, req: { kind: 'release' } }).catch(() => {});
+  }
+
+  runShardPair(
+    worker: number,
+    lowSlot: number,
+    highSlot: number,
+    step: PlanStep,
+    blocks: number,
+  ): Promise<number> {
+    const peerId = this.#ready[worker];
+    const rpc = peerId === undefined ? undefined : this.#rpcs.get(peerId);
+    if (!rpc) return Promise.reject(new Error('expand helper left before the local shard exchange'));
+    return rpc.call<number>(WORK_SHARD, { pair: { lowSlot, highSlot, step, blocks } });
+  }
+
+  get hostedShards(): number {
+    return this.#hostedSlots.size;
   }
 
   /** Broadcast what is running. Returns the run's key, for `broadcastResult`. */
@@ -307,7 +407,16 @@ export class Session {
       for (const p of peers) mesh.connectTo(p.peerId);
       signaling.on('peer-joined', ({ peerId: id }) => mesh.connectTo(id));
       mesh.on('ctrl-message', ({ peerId: from, message }) => this.#onCtrl(from, message));
+      mesh.on('bulk-message', (detail) => this.#onBulk(detail));
+      mesh.on('peer-connected', ({ peerId: id }) => {
+        try {
+          mesh.sendCtrl(id, { t: 'capacity', memoryGiB: this.memoryGiB });
+        } catch {
+          // disconnect handling below owns the state transition
+        }
+      });
       mesh.on('peer-disconnected', ({ peerId: id }) => {
+        this.#dropBulkPeer(id);
         if (id === this.#hostId) {
           this.hostLost = true;
           this.#bump();
@@ -336,8 +445,9 @@ export class Session {
         },
         message,
         (t, args) => {
-          if (t !== WORK_SHOTS) throw new Error(`unknown request '${t}'`);
-          return this.#runWork(args as unknown as WorkRequest);
+          if (t === WORK_SHOTS) return this.#runWork(args as unknown as WorkRequest);
+          if (t === WORK_SHARD) return this.#runShardWork(from, args);
+          throw new Error(`unknown request '${t}'`);
         },
       );
       return;
@@ -350,6 +460,10 @@ export class Session {
         this.hostLost = false;
         this.shared = message.state as unknown as SharedState;
         this.sharedKey = message.key as string;
+        break;
+      case 'capacity':
+        if (this.role !== 'host') return;
+        this.#capacities.set(from, Math.min(16, Math.max(0.25, Number(message.memoryGiB) || 1)));
         break;
       case 'layout':
         this.layout = message.layout as unknown as SharedStageLayout;
@@ -364,6 +478,86 @@ export class Session {
         return;
     }
     this.#bump();
+  }
+
+  setShardWorker(fn: SessionShardWorker): void {
+    this.#shardWorker = fn;
+  }
+
+  setShardPairWorker(fn: SessionShardPairWorker): void {
+    this.#shardPairWorker = fn;
+  }
+
+  async #runShardWork(from: string, args: Record<string, unknown>): Promise<unknown> {
+    if (args.pair) {
+      const pair = args.pair as {
+        lowSlot: number;
+        highSlot: number;
+        step: PlanStep;
+        blocks: number;
+      };
+      if (!this.#shardPairWorker) throw new Error('no local expand exchange runtime ready');
+      return this.#shardPairWorker(pair.lowSlot, pair.highSlot, pair.step, pair.blocks);
+    }
+    const worker = this.#shardWorker;
+    if (!worker || !this.#mesh) throw new Error('no expand shard runtime ready on this machine');
+    const slot = Number(args.slot);
+    let req = args.req as unknown as ShardReqBody | { kind: 'release' };
+    if (args.bulkTransferId !== undefined && (req.kind === 'importApply' || req.kind === 'importDot')) {
+      const buffer = await this.#waitBulk(from, Number(args.bulkTransferId));
+      req = { ...req, buffer } as ShardReqBody;
+    }
+    const result = await worker(slot, req);
+    if (req.kind === 'init') this.#hostedSlots.add(slot);
+    if (req.kind === 'release') this.#hostedSlots.delete(slot);
+    if (req.kind === 'init' || req.kind === 'release') this.#bump();
+    if (req.kind === 'exportBlock') {
+      const view = result as ArrayBufferView;
+      const bulkTransferId = this.#mesh.sendBulk(from, view);
+      return { bulkTransferId };
+    }
+    return ArrayBuffer.isView(result) ? Array.from(result as unknown as ArrayLike<number>) : result;
+  }
+
+  #bulkKey(peerId: string, transferId: number): string {
+    return `${peerId}:${transferId}`;
+  }
+
+  #onBulk({ peerId, transferId, buffer }: { peerId: string; transferId: number; buffer: ArrayBuffer }): void {
+    const key = this.#bulkKey(peerId, transferId);
+    const waiter = this.#bulkWaiters.get(key);
+    if (waiter) {
+      this.#bulkWaiters.delete(key);
+      clearTimeout(waiter.timer);
+      waiter.resolve(buffer);
+    } else {
+      this.#bulkReady.set(key, buffer);
+    }
+  }
+
+  #waitBulk(peerId: string, transferId: number): Promise<ArrayBuffer> {
+    const key = this.#bulkKey(peerId, transferId);
+    const ready = this.#bulkReady.get(key);
+    if (ready) {
+      this.#bulkReady.delete(key);
+      return Promise.resolve(ready);
+    }
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this.#bulkWaiters.delete(key);
+        reject(new Error(`timed out waiting for expand block ${transferId} from ${peerId}`));
+      }, 30_000);
+      this.#bulkWaiters.set(key, { resolve, reject, timer });
+    });
+  }
+
+  #dropBulkPeer(peerId: string): void {
+    for (const [key, waiter] of this.#bulkWaiters) {
+      if (!key.startsWith(`${peerId}:`)) continue;
+      clearTimeout(waiter.timer);
+      waiter.reject(new Error('peer disconnected during an expand block transfer'));
+      this.#bulkWaiters.delete(key);
+    }
   }
 
   async #runWork(req: WorkRequest): Promise<WorkReply> {

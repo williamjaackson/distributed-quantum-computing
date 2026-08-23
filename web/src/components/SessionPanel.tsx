@@ -8,7 +8,8 @@
  */
 import { useRef, useState } from 'react';
 import type { Session } from '../net/session';
-import { expandCapacity, shotCapacity } from '../net/capacity';
+import { shotCapacity } from '../net/capacity';
+import { maxDistributedQubits, planDistributedShards } from '../net/expand-plan';
 import { Info } from './Info';
 
 export type DistributedMode = 'shots' | 'expand';
@@ -32,6 +33,7 @@ export function SessionPanel({
   qubitCeiling,
   maxShardQubits,
   localLayout,
+  currentQubits,
 }: {
   session: Session;
   mode: DistributedMode;
@@ -40,6 +42,7 @@ export function SessionPanel({
   qubitCeiling: number;
   maxShardQubits: number | null;
   localLayout: string | null;
+  currentQubits: number | null;
 }) {
   const [copied, setCopied] = useState(false);
   const [roomCode, setRoomCode] = useState('');
@@ -113,7 +116,25 @@ export function SessionPanel({
   if (session.role === 'host') {
     const helpers = session.workers();
     const shot = shotCapacity(shots, helpers);
-    const expand = expandCapacity(helpers + 1, maxShardQubits ?? 26);
+    const participants = session.expandParticipants();
+    const contributedGiB = participants.reduce((sum, p) => sum + p.memoryGiB, 0);
+    const roomQubits = maxDistributedQubits(
+      participants.map(({ id, memoryGiB }) => ({ id, memoryGiB })),
+      maxShardQubits ?? 26,
+    );
+    let liveExpand: ReturnType<typeof planDistributedShards> | null = null;
+    let expandError: string | null = null;
+    if (currentQubits !== null) {
+      try {
+        liveExpand = planDistributedShards(
+          currentQubits,
+          participants.map(({ id, memoryGiB }) => ({ id, memoryGiB })),
+          maxShardQubits ?? 26,
+        );
+      } catch (e) {
+        expandError = e instanceof Error ? e.message : String(e);
+      }
+    }
     return (
       <section className="card">
         <h2 className="card-title">Sharing</h2>
@@ -138,13 +159,21 @@ export function SessionPanel({
         <p className="note">
           {session.workers() === 0
             ? 'no one connected yet — send the link'
-            : `${session.workers()} machine${session.workers() === 1 ? '' : 's'} helping with the shots`}
+            : `${session.workers()} machine${session.workers() === 1 ? '' : 's'} helping with ${mode === 'expand' ? 'state-vector shards' : 'the shots'}`}
         </p>
         <label className="field">
           <span className="field-label">Distributed mode</span>
           <select value={mode} onChange={(e) => onMode(e.target.value as DistributedMode)}>
             <option value="shots">Shots — pooled measurement</option>
-            <option value="expand" disabled>Expand — not implemented yet</option>
+            <option value="expand">Expand — shared state-vector shards</option>
+          </select>
+        </label>
+        <label className="field">
+          <span className="field-label">This machine contributes</span>
+          <select value={session.memoryGiB} onChange={(e) => session.setMemoryGiB(Number(e.target.value))}>
+            {[0.25, 0.5, 1, 2, 4, 8, 16].map((gib) => (
+              <option key={gib} value={gib}>{gib} GiB</option>
+            ))}
           </select>
         </label>
         <dl className="capacity-list">
@@ -152,36 +181,69 @@ export function SessionPanel({
             <dt>Machines</dt>
             <dd>{shot.machines} ({helpers} helping)</dd>
           </div>
-          <div>
-            <dt>Shot capacity</dt>
-            <dd>
-              {shots.toLocaleString()} total · {shot.smallestShare.toLocaleString()}
-              {shot.smallestShare === shot.largestShare
-                ? ''
-                : `–${shot.largestShare.toLocaleString()}`} each
-            </dd>
-          </div>
-          <div>
-            <dt>Register capacity</dt>
-            <dd>{qubitCeiling} qubits (unchanged in Shots)</dd>
-          </div>
-          {localLayout && (
-            <div>
-              <dt>Active local layout</dt>
-              <dd>{localLayout}</dd>
-            </div>
+          {mode === 'shots' ? (
+            <>
+              <div>
+                <dt>Shot workload</dt>
+                <dd>
+                  {shots.toLocaleString()} total · {shot.smallestShare.toLocaleString()}
+                  {shot.smallestShare === shot.largestShare
+                    ? ''
+                    : `–${shot.largestShare.toLocaleString()}`} each
+                </dd>
+              </div>
+              <div>
+                <dt>Per-machine register</dt>
+                <dd>{qubitCeiling} qubits maximum</dd>
+              </div>
+              {localLayout && (
+                <div>
+                  <dt>Local worker shards</dt>
+                  <dd>{localLayout}</dd>
+                </div>
+              )}
+            </>
+          ) : (
+            <>
+              <div>
+                <dt>Room memory</dt>
+                <dd>{contributedGiB} GiB contributed</dd>
+              </div>
+              <div>
+                <dt>Memory capacity</dt>
+                <dd>{roomQubits} qubits</dd>
+              </div>
+              <div>
+                <dt>Runnable here</dt>
+                <dd>
+                  {Math.min(roomQubits, qubitCeiling)} qubits
+                  {roomQubits > qubitCeiling ? ' (visualiser ceiling)' : ''}
+                </dd>
+              </div>
+              {liveExpand && (
+                <>
+                  <div>
+                    <dt>This register</dt>
+                    <dd>{liveExpand.globalQubits} qubits · {bytes(liveExpand.totalBytes)}</dd>
+                  </div>
+                  <div>
+                    <dt>Worker shards</dt>
+                    <dd>{liveExpand.shards} × {bytes(liveExpand.bytesPerShard)}</dd>
+                  </div>
+                  <div>
+                    <dt>Per machine</dt>
+                    <dd>
+                      {Object.entries(liveExpand.slotsByParticipant)
+                        .map(([id, count]) => `${id === 'host' ? 'host' : id.slice(0, 6)}: ${count} shards`)
+                        .join(' · ')}
+                    </dd>
+                  </div>
+                </>
+              )}
+            </>
           )}
         </dl>
-        <details className="capacity-details">
-          <summary>Expand capacity preview</summary>
-          <p className="field-hint">
-            {expand.usableShards} usable shard{expand.usableShards === 1 ? '' : 's'} across the
-            largest power-of-two group: a maximum envelope of {expand.maxQubits} qubits with{' '}
-            {bytes(expand.bytesPerShard)} per machine ({bytes(expand.totalBytes)} total state).
-            Smaller shards trade some capacity for more parallel workers. Expand transport is planned
-            but not connected yet.
-          </p>
-        </details>
+        {mode === 'expand' && expandError && <p className="error">{expandError}</p>}
         {session.error && <p className="error">{session.error}</p>}
       </section>
     );
@@ -203,6 +265,14 @@ export function SessionPanel({
               ? 'the host disconnected — what you see is the last shared run'
               : 'watching the host, read-only'}
         </p>
+        <label className="field">
+          <span className="field-label">Contribute to Expand</span>
+          <select value={session.memoryGiB} onChange={(e) => session.setMemoryGiB(Number(e.target.value))}>
+            {[0.25, 0.5, 1, 2, 4, 8, 16].map((gib) => (
+              <option key={gib} value={gib}>{gib} GiB</option>
+            ))}
+          </select>
+        </label>
       </section>
       <section className="card">
         <h2 className="card-title">
@@ -225,6 +295,11 @@ export function SessionPanel({
             </p>
             {working.done > 0 && <progress value={working.done} max={working.shots} />}
           </>
+        ) : session.shared?.distributedMode === 'expand' && session.hostedShards > 0 ? (
+          <p className="note">
+            hosting {session.hostedShards} state-vector shard{session.hostedShards === 1 ? '' : 's'}
+            {' '}within a {session.memoryGiB} GiB contribution
+          </p>
         ) : (
           <p className="note">waiting for work from the host</p>
         )}

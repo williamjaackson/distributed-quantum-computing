@@ -471,20 +471,21 @@ export function ViewStage({
           );
         })}
         {!multi && <span className="tabs-hint">drag a tab in to compare</span>}
-        {badge}
       </div>
 
-      <div
-        className="stage-split"
-        ref={split}
-        onDragOver={onDragOver}
-        onDragLeave={(e) => {
+      <div className="stage-wrap">
+        {badge && <div className="stage-badge-row">{badge}</div>}
+        <div
+          className="stage-split"
+          ref={split}
+          onDragOver={onDragOver}
+          onDragLeave={(e) => {
           // Only when the pointer has actually left the stage — moving between
           // two panes fires a leave for the one behind.
           if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setDrop(null);
         }}
-        onDrop={onDrop}
-      >
+          onDrop={onDrop}
+        >
         {rows.map((r, ri) => (
           <Fragment key={r.key}>
             {drop?.kind === 'row' && drop.at === ri && <div className="pane-drop-row" aria-hidden />}
@@ -598,6 +599,7 @@ export function ViewStage({
         {drop?.kind === 'row' && drop.at === rows.length && (
           <div className="pane-drop-row" aria-hidden />
         )}
+        </div>
       </div>
     </>
   );

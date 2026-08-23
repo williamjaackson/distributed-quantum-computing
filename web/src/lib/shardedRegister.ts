@@ -23,7 +23,7 @@ import { blochOf, formatBytes, pauliCorrelation, TOP_K } from './backend';
 import type { ShardInfo, ShardReq, ShardReqBody, ShardRes } from './shardProtocol';
 
 /** One decoded step of a planned gate. See `shard::encode_plan` in the engine. */
-interface PlanStep {
+export interface PlanStep {
   base: string;
   /** 0 = intra-shard, 1 = shard pairing. */
   kind: number;
@@ -56,7 +56,17 @@ function decodePlan(enc: Float64Array, base: string[]): PlanStep[] {
   return steps;
 }
 
-class ShardHandle {
+export interface ShardTransport {
+  readonly index: number;
+  readonly owner: string;
+  send<T>(req: ShardReqBody, transfer?: Transferable[]): Promise<T>;
+  terminate(): void;
+  /** Fast path when both shards are worker slots on the same remote machine. */
+  exchangeWith?(partner: ShardTransport, step: PlanStep, blocks: number): Promise<number>;
+}
+
+export class ShardHandle implements ShardTransport {
+  readonly owner = 'local';
   private worker: Worker;
   private pending = new Map<number, { resolve: (v: unknown) => void; reject: (e: Error) => void }>();
   private nextId = 1;
@@ -101,7 +111,7 @@ class ShardHandle {
 
 export class ShardedRegister implements Backend {
   readonly sharded = true;
-  private handles: ShardHandle[] = [];
+  private handles: ShardTransport[] = [];
   private base: string[] = [];
   private info: ShardInfo | null = null;
   /** The engine's own generator, so a sharded run observes exactly the outcomes
@@ -135,10 +145,23 @@ export class ShardedRegister implements Backend {
   }
 
   static async create(layout: ShardLayout, seed: number): Promise<ShardedRegister> {
+    const handles = Array.from({ length: layout.shards }, (_, w) => new ShardHandle(w));
+    return ShardedRegister.createWithTransports(layout, seed, handles);
+  }
+
+  /** Build the same register over any mixture of local and remote shard slots. */
+  static async createWithTransports(
+    layout: ShardLayout,
+    seed: number,
+    handles: ShardTransport[],
+  ): Promise<ShardedRegister> {
+    if (handles.length !== layout.shards || handles.some((h, i) => h.index !== i)) {
+      throw new Error(`expected transports for shard ids 0…${layout.shards - 1}`);
+    }
     const reg = new ShardedRegister(layout, seed);
     reg.base = baseGates();
+    reg.handles = handles;
     try {
-      for (let w = 0; w < layout.shards; w++) reg.handles.push(new ShardHandle(w));
       const infos = await Promise.all(
         reg.handles.map((h) =>
           h.send<ShardInfo>({
@@ -200,7 +223,7 @@ export class ShardedRegister implements Backend {
   }
 
   /** Shards a global control mask selects. */
-  private taking(globalCmask: number): ShardHandle[] {
+  private taking(globalCmask: number): ShardTransport[] {
     return this.handles.filter((h) => (h.index & globalCmask) === globalCmask);
   }
 
@@ -213,7 +236,7 @@ export class ShardedRegister implements Backend {
    */
   private async runPair(step: PlanStep) {
     const bit = 1 << step.targetBit;
-    const pairs: [ShardHandle, ShardHandle][] = [];
+    const pairs: [ShardTransport, ShardTransport][] = [];
     for (const h of this.taking(step.globalCmask)) {
       if (h.index & bit) continue;
       pairs.push([h, this.handles[h.index | bit]]);
@@ -221,8 +244,12 @@ export class ShardedRegister implements Backend {
     await Promise.all(pairs.map(([lo, hi]) => this.exchangePair(step, lo, hi)));
   }
 
-  private async exchangePair(step: PlanStep, lo: ShardHandle, hi: ShardHandle) {
+  private async exchangePair(step: PlanStep, lo: ShardTransport, hi: ShardTransport) {
     const blocks = this.info?.numBlocks ?? 1;
+    if (lo.owner === hi.owner && lo.exchangeWith) {
+      this.exchangedBlocks += await lo.exchangeWith(hi, step, blocks);
+      return;
+    }
     for (let b = 0; b < blocks; b++) {
       // Both exports first: neither shard may be written before both are read.
       const [loBlock, hiBlock] = await Promise.all([

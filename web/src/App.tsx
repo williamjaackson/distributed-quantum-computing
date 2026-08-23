@@ -27,6 +27,7 @@ import { usePlayer } from './lib/usePlayer';
 import { useSession } from './lib/useSession';
 import { runKey } from './net/protocol';
 import { flatFromOutcomes, outcomesFromFlat, RESULT_OUTCOME_CAP } from './net/shots';
+import { createDistributedBackend, ExpandShardPool } from './net/expand-runtime';
 import { PROGRAMS, programById } from './programs';
 import { Info } from './components/Info';
 import { InputsPanel } from './components/InputsPanel';
@@ -57,6 +58,7 @@ export function App() {
   const [progress, setProgress] = useState<number | null>(null);
 
   const session = useSession();
+  const [expandPool] = useState(() => new ExpandShardPool());
   const viewer = session.role === 'viewer';
 
   useEffect(() => {
@@ -84,6 +86,14 @@ export function App() {
       return { flat: flatFromOutcomes(tl.shots, RESULT_OUTCOME_CAP), taken: tl.measurement.taken };
     });
   }, [session]);
+
+  useEffect(() => {
+    session.setShardWorker((slot, req) => expandPool.run(slot, req));
+    session.setShardPairWorker((low, high, step, blocks) =>
+      expandPool.exchange(low, high, step, blocks),
+    );
+    return () => expandPool.dispose();
+  }, [session, expandPool]);
 
   const program = programById(programId);
   // Memoised for its *identity*, not its cost: a program with no stored values
@@ -150,6 +160,7 @@ export function App() {
       },
       cancelled: () => abandoned || generation.current !== mine,
       remote: hosting
+        && distributedMode === 'shots'
         ? {
             count: () => session.workers(),
             run: (i, n, s) =>
@@ -161,6 +172,10 @@ export function App() {
               }),
           }
         : undefined,
+      backendFactory:
+        hosting && distributedMode === 'expand'
+          ? (nQubits, runSeed) => createDistributedBackend(nQubits, runSeed, session)
+          : undefined,
       preset: preset
         ? {
             outcomes: outcomesFromFlat(preset.flat),
@@ -196,14 +211,16 @@ export function App() {
     run?.seed,
     run?.measureAtEnd,
     preset,
+    distributedMode,
+    session.version,
   ]);
 
   // Mirror this page's run to any viewers, whenever it changes and whenever a
   // new viewer connects (the session replays the last of each message itself).
   useEffect(() => {
     if (session.role !== 'host') return;
-    session.broadcastState({ programId, values, shots, seed, measureAtEnd });
-  }, [session, session.role, programId, values, shots, seed, measureAtEnd]);
+    session.broadcastState({ programId, values, shots, seed, measureAtEnd, distributedMode });
+  }, [session, session.role, programId, values, shots, seed, measureAtEnd, distributedMode]);
 
   const player = usePlayer(timeline?.frames.length ?? 1);
 
@@ -452,6 +469,7 @@ export function App() {
             qubitCeiling={CEILING}
             maxShardQubits={limits?.maxShardQubits ?? null}
             localLayout={timeline?.backend.description ?? null}
+            currentQubits={timeline?.nQubits ?? null}
           />
 
           <RegisterPanel timeline={timeline} limits={limits} />
@@ -469,7 +487,7 @@ export function App() {
                  whole stage: it is a fact about the run, not about a view. */
               timeline && timeline.readout !== null && frameIndex > timeline.circuitSteps ? (
                 <span className={`showing${timeline.readoutSource === 'best' ? ' is-best' : ''}`}>
-                  {timeline.readoutSource === 'best' ? 'showing the best shot' : 'showing one draw'}
+                  {timeline.readoutSource === 'best' ? 'showing the best shot' : 'showing one shot'}
                 </span>
               ) : null
             }

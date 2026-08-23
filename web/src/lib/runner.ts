@@ -183,6 +183,8 @@ export interface RunOptions {
    * more than the gates they summarise.
    */
   light?: boolean;
+  /** Override where the register's shards live (Expand mode). */
+  backendFactory?: (nQubits: number, seed: number) => Promise<Backend>;
   /** Other machines willing to take a share of the shots. */
   remote?: RemoteSampler;
   /**
@@ -256,7 +258,8 @@ export async function runProgram(
   let backend: Backend | null = null;
   const started = performance.now();
   try {
-    backend = await createBackend(nQubits, seedFor(seed, 0));
+    backend = await (options.backendFactory?.(nQubits, seedFor(seed, 0)) ??
+      createBackend(nQubits, seedFor(seed, 0)));
     if (record) frames.push(await snapshot(backend, 0, bits, want));
 
     if (!error) {

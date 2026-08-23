@@ -43,6 +43,8 @@ export const CHANNEL = Object.freeze({ CTRL: 'ctrl', BULK: 'bulk' });
 
 /** The one mesh-RPC request: take shots on the host's behalf. */
 export const WORK_SHOTS = 'shots';
+/** Execute one command against one worker-owned shard slot. */
+export const WORK_SHARD = 'shard';
 
 /** Everything a run is a pure function of. Sending this *is* sending the run. */
 export interface SharedState {
@@ -51,6 +53,7 @@ export interface SharedState {
   shots: number;
   seed: number;
   measureAtEnd: boolean;
+  distributedMode?: 'shots' | 'expand';
 }
 
 /** The host's complete tiled stage arrangement, mirrored read-only by viewers. */
@@ -102,5 +105,5 @@ export function runKey(s: SharedState): string {
     .sort()
     .map((k) => `${k}=${String(s.values[k])}`)
     .join(',');
-  return `${s.programId}|${values}|${s.shots}|${s.seed}|${s.measureAtEnd ? 1 : 0}`;
+  return `${s.programId}|${values}|${s.shots}|${s.seed}|${s.measureAtEnd ? 1 : 0}|${s.distributedMode ?? 'shots'}`;
 }

@@ -19,8 +19,9 @@ result back to the room.
 
 The host's complete stage layout is mirrored too: split rows, pane order,
 relative pane sizes, and per-pane zoom. Viewer controls remain locked. The
-Sharing card exposes current machine and per-machine shot capacity and a
-clearly unavailable preview of Expand-mode shard, qubit, and memory capacity.
+Sharing card exposes machine and per-machine shot capacity. Expand combines
+each machine's chosen memory contribution into one register and shows total
+room memory, qubit capacity, shard size, and shards per machine.
 
 Signaling is served at `/ws` by Vite in development and preview, so there is no
 second process or relay address in ordinary links. `npm run signal` starts the
@@ -28,6 +29,13 @@ standalone relay for deployments that need one; pass its address with the
 advanced `?s=` query parameter. Peer traffic uses WebRTC directly. Rooms are
 unprotected capabilities and the default STUN-only setup does not traverse
 every restrictive NAT.
+
+Expand does not treat a machine as one shard. Every active participant runs a
+local group of at least two worker-owned WASM shards, and higher memory
+contributions create more slots on that machine. Pairs on one machine exchange
+through its local workers; only pairs split across machines send amplitude
+blocks over WebRTC. Losing a machine still loses its unique shards and aborts
+that run.
 
 ## Layout
 

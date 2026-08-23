@@ -34,12 +34,12 @@ Hosts may enter a memorable 3–24 character room code before sharing, or leave
 it blank for a generated code. Codes are case-insensitive and must contain only
 letters, numbers, and internal hyphens.
 
-The Sharing card reports the live machine count, shot split, and register
-capacity. It also previews the power-of-two shard group, qubit ceiling, and RAM
-represented by the planned Expand mode. Expand is shown as unavailable until
-cross-machine shard transport is implemented; selecting Shots never claims to
-increase register capacity. Tiled stage layouts are shared in full, including
-pane order, divider proportions, and per-pane zoom.
+The Sharing card reports machine count, shot split, contributed RAM, worker
+shards, and room register capacity. In Expand mode every participating machine
+owns at least two local worker shards; a machine may contribute several GiB and
+therefore host many shards. Partner blocks stay local when both shards share a
+machine and use chunked WebRTC when they do not. Tiled stage layouts are shared
+in full, including pane order, divider proportions, and per-pane zoom.
 
 The Vite development and preview servers include the WebSocket signaling relay
 at `/ws`, so normal local and LAN sharing needs only the one web-server process.

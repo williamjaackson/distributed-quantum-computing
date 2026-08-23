@@ -170,21 +170,16 @@ outright — "the browser side only executes, never decides" — and this plan
 keeps that boundary exactly where it already was; it just moves "executes"
 from same-process shards to separate machines.
 
-### 4.2 Shard layout and the one-shard-per-machine constraint
+### 4.2 Shard layout and multi-shard machines
 
-`plan_shards(globalQubits, maxShardQubits, minShardBits)` returns
-`shard_bits`, `local_qubits`, and `shards = 2^shard_bits`, precisely as it
-does today. The orchestrator then needs exactly `shards` machines, each
-holding **exactly one** shard (`web/src/host-orchestrator.js`,
-`web/src/exchange.js`). This is a deliberate simplification: with one shard
-per machine, a machine has at most one active exchange partner at any given
-step (a shard has exactly one partner for a given target bit), so there's
-never a need to disambiguate which of several concurrent exchanges a given
-block belongs to. Supporting several shards per machine — useful for a
-beefy machine that wants to contribute proportionally more — is possible but
-needs per-shard-pair transfer tagging added to `exchange.js`; it's called
-out in §7 rather than built now, to keep the first version's concurrency
-story simple enough to fully verify.
+`planDistributedShards` chooses `shard_bits`, `local_qubits`, and
+`shards = 2^shard_bits` from the register size and every participant's memory
+contribution. Each active machine receives at least two local worker shards;
+machines contributing several GiB receive proportionally more slots.
+Assignments carry a global shard id and a machine-local slot id. When a shard
+pair shares an owner its blocks move only through that machine's worker bridge.
+Otherwise the same blocks use the chunked WebRTC bulk channel, tagged by peer
+and transfer id.
 
 ### 4.3 The gate loop
 
@@ -364,8 +359,6 @@ trying it across two separate machines or networks.
 - **No pipelining across steps or gates.** Every step barriers on every
   participant. Correct, simple, and leaves real speed on the table for
   circuits where many steps touch disjoint shard subsets. (§4.3)
-- **One shard per machine.** A beefy machine can't yet host two shards to
-  contribute proportionally more compute/memory than a weaker one. (§4.2)
 - **No adaptive shot rebalancing in shots mode.** A slow-but-connected
   participant is waited on in full; only an outright disconnect is
   recovered from. (§3.2)
@@ -378,10 +371,3 @@ trying it across two separate machines or networks.
   assigns them a shard or shot-worker role, run wasm code on the host's
   behalf. Fine among trusted machines; add a passphrase check in
   `server.mjs` before using this across people you don't already trust.
-- **The UI's shard-count estimate (`1 << (qubits - maxShardQubits)`) is a
-  local approximation of `plan_shards`**, computed before the real wasm call
-  so the page can build an assignment list without an extra round trip.
-  `runExpandMode` re-derives the authoritative count from the real
-  `plan_shards` call and raises a clear error on any mismatch, so this can
-  never silently misbehave — worth knowing about if the UI ever asks for a
-  different number of machines than expected.
