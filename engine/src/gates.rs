@@ -10,7 +10,7 @@
 //! Nothing here ever materialises a 2^n x 2^n matrix; the largest object is 2x2.
 
 use crate::complex::{Mat2, C};
-use crate::state::{QsimError, StateVector};
+use crate::state::{RockError, StateVector};
 
 const INV_SQRT2: f64 = std::f64::consts::FRAC_1_SQRT_2;
 
@@ -249,7 +249,7 @@ impl Gate {
 // ---------------------------------------------------------------------------
 
 /// Apply a single-qubit gate, routing to a specialised kernel where one exists.
-pub fn apply(sv: &mut StateVector, gate: Gate, target: u32) -> Result<(), QsimError> {
+pub fn apply(sv: &mut StateVector, gate: Gate, target: u32) -> Result<(), RockError> {
     sv.check_qubit(target)?;
     match gate {
         Gate::H => apply_h(sv, target),
@@ -273,7 +273,7 @@ pub fn apply_controlled(
     gate: Gate,
     controls: &[u32],
     target: u32,
-) -> Result<(), QsimError> {
+) -> Result<(), RockError> {
     if controls.is_empty() {
         return apply(sv, gate, target);
     }
@@ -293,7 +293,7 @@ pub fn apply_controlled(
 }
 
 /// Exchange two qubits by swapping the amplitudes whose bits disagree.
-pub fn apply_swap(sv: &mut StateVector, a: u32, b: u32) -> Result<(), QsimError> {
+pub fn apply_swap(sv: &mut StateVector, a: u32, b: u32) -> Result<(), RockError> {
     sv.check_distinct(&[a, b])?;
     let (ma, mb) = (1usize << a, 1usize << b);
     let amps = sv.amps_mut();

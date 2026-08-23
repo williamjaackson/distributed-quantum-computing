@@ -2,7 +2,7 @@
 
 use crate::complex::C;
 use crate::rng::Rng;
-use crate::state::{QsimError, StateVector};
+use crate::state::{RockError, StateVector};
 
 /// Above this qubit count, returning a full probability or amplitude array would
 /// allocate a second buffer comparable to the state vector itself — enough to
@@ -10,9 +10,9 @@ use crate::state::{QsimError, StateVector};
 /// full distributions for small registers, so refuse rather than risk the OOM.
 pub const FULL_ARRAY_QUBIT_LIMIT: u32 = 22;
 
-fn guard_full_array(sv: &StateVector) -> Result<(), QsimError> {
+fn guard_full_array(sv: &StateVector) -> Result<(), RockError> {
     if sv.n_qubits() > FULL_ARRAY_QUBIT_LIMIT {
-        return Err(QsimError::TooLargeForOperation {
+        return Err(RockError::TooLargeForOperation {
             n_qubits: sv.n_qubits(),
             limit: FULL_ARRAY_QUBIT_LIMIT,
         });
@@ -21,11 +21,11 @@ fn guard_full_array(sv: &StateVector) -> Result<(), QsimError> {
 }
 
 /// Probability of every basis state, indexed by the integer the bit string forms.
-pub fn probabilities(sv: &StateVector) -> Result<Vec<f64>, QsimError> {
+pub fn probabilities(sv: &StateVector) -> Result<Vec<f64>, RockError> {
     guard_full_array(sv)?;
     let mut out: Vec<f64> = Vec::new();
     out.try_reserve_exact(sv.len())
-        .map_err(|_| QsimError::OutOfMemory {
+        .map_err(|_| RockError::OutOfMemory {
             requested: sv.n_qubits(),
             bytes: (sv.len() as u64) * 8,
         })?;
@@ -34,11 +34,11 @@ pub fn probabilities(sv: &StateVector) -> Result<Vec<f64>, QsimError> {
 }
 
 /// Amplitudes flattened to `[re0, im0, re1, im1, ...]` for transfer to JS.
-pub fn amplitudes_flat(sv: &StateVector) -> Result<Vec<f64>, QsimError> {
+pub fn amplitudes_flat(sv: &StateVector) -> Result<Vec<f64>, RockError> {
     guard_full_array(sv)?;
     let mut out: Vec<f64> = Vec::new();
     out.try_reserve_exact(sv.len() * 2)
-        .map_err(|_| QsimError::OutOfMemory {
+        .map_err(|_| RockError::OutOfMemory {
             requested: sv.n_qubits(),
             bytes: (sv.len() as u64) * 16,
         })?;
@@ -51,7 +51,7 @@ pub fn amplitudes_flat(sv: &StateVector) -> Result<Vec<f64>, QsimError> {
 
 /// Marginal probability of finding `qubit` in |1>. Streams the state vector, so
 /// this works at any qubit count.
-pub fn probability_of_one(sv: &StateVector, qubit: u32) -> Result<f64, QsimError> {
+pub fn probability_of_one(sv: &StateVector, qubit: u32) -> Result<f64, RockError> {
     sv.check_qubit(qubit)?;
     let step = 1usize << qubit;
     let mut p = 0.0;
@@ -64,7 +64,7 @@ pub fn probability_of_one(sv: &StateVector, qubit: u32) -> Result<f64, QsimError
 }
 
 /// Pauli-Z expectation value on one qubit: `P(0) - P(1)`.
-pub fn expectation_z(sv: &StateVector, qubit: u32) -> Result<f64, QsimError> {
+pub fn expectation_z(sv: &StateVector, qubit: u32) -> Result<f64, RockError> {
     Ok(1.0 - 2.0 * probability_of_one(sv, qubit)?)
 }
 
@@ -75,7 +75,7 @@ pub fn expectation_z(sv: &StateVector, qubit: u32) -> Result<f64, QsimError> {
 /// The off-diagonal element is the part that matters: the diagonal is just the
 /// marginal, while `r01` carries the phase relationship *and* is the only part
 /// entanglement can destroy. That is what makes the Bloch radius meaningful.
-pub fn reduced_one(sv: &StateVector, qubit: u32) -> Result<[f64; 4], QsimError> {
+pub fn reduced_one(sv: &StateVector, qubit: u32) -> Result<[f64; 4], RockError> {
     sv.check_qubit(qubit)?;
     let step = 1usize << qubit;
     let mut r00 = 0.0;
@@ -101,7 +101,7 @@ pub fn reduced_one(sv: &StateVector, qubit: u32) -> Result<[f64; 4], QsimError> 
 /// maximally entangled with the rest of the register — the single number that
 /// says "this qubit has no state of its own", which no amount of looking at the
 /// state vector makes obvious.
-pub fn bloch_vector(sv: &StateVector, qubit: u32) -> Result<[f64; 3], QsimError> {
+pub fn bloch_vector(sv: &StateVector, qubit: u32) -> Result<[f64; 3], RockError> {
     let [r00, re01, im01, r11] = reduced_one(sv, qubit)?;
     Ok([2.0 * re01, -2.0 * im01, r00 - r11])
 }
@@ -117,7 +117,7 @@ pub fn bloch_vector(sv: &StateVector, qubit: u32) -> Result<[f64; 3], QsimError>
 /// `O(n^2 * 2^n)`. That is affordable for a register you would want to draw a
 /// link diagram of and not much beyond, which is a budgeting decision for the
 /// caller rather than something to solve here.
-pub fn reduced_two(sv: &StateVector, a: u32, b: u32) -> Result<[f64; 32], QsimError> {
+pub fn reduced_two(sv: &StateVector, a: u32, b: u32) -> Result<[f64; 32], RockError> {
     sv.check_qubit(a)?;
     sv.check_qubit(b)?;
     reduced_two_of(sv.amps(), a, b)
@@ -130,14 +130,14 @@ pub fn reduced_two(sv: &StateVector, a: u32, b: u32) -> Result<[f64; 32], QsimEr
 /// slices, and a pair straddling two shards has no slice-local form. Keeping one
 /// implementation and passing it the numbers beats a second copy that agrees
 /// only by inspection.
-pub fn reduced_two_of(amps: &[C], a: u32, b: u32) -> Result<[f64; 32], QsimError> {
+pub fn reduced_two_of(amps: &[C], a: u32, b: u32) -> Result<[f64; 32], RockError> {
     if a == b {
-        return Err(QsimError::DuplicateQubit(a));
+        return Err(RockError::DuplicateQubit(a));
     }
     let n_qubits = amps.len().trailing_zeros();
     for q in [a, b] {
         if !amps.len().is_power_of_two() || q >= n_qubits {
-            return Err(QsimError::InvalidQubit { qubit: q, n_qubits });
+            return Err(RockError::InvalidQubit { qubit: q, n_qubits });
         }
     }
     let ba = 1usize << a;
@@ -201,11 +201,11 @@ pub fn top_amplitudes(sv: &StateVector, k: usize) -> Vec<(u64, C)> {
 /// Errors if the requested branch holds no probability: projecting onto
 /// something the state cannot produce has no answer, and returning a silently
 /// unnormalised state would be worse than saying so.
-pub fn collapse(sv: &mut StateVector, qubit: u32, outcome: u8) -> Result<(), QsimError> {
+pub fn collapse(sv: &mut StateVector, qubit: u32, outcome: u8) -> Result<(), RockError> {
     let p1 = probability_of_one(sv, qubit)?;
     let p = if outcome == 1 { p1 } else { 1.0 - p1 };
     if p <= 0.0 {
-        return Err(QsimError::ImpossibleOutcome { qubit, outcome });
+        return Err(RockError::ImpossibleOutcome { qubit, outcome });
     }
     project(sv, qubit, outcome, 1.0 / p.sqrt());
     Ok(())
@@ -225,7 +225,7 @@ fn project(sv: &mut StateVector, qubit: u32, outcome: u8, scale: f64) {
 }
 
 /// Measure `qubit`, collapse the state onto the observed outcome, renormalise.
-pub fn measure(sv: &mut StateVector, qubit: u32, rng: &mut Rng) -> Result<u8, QsimError> {
+pub fn measure(sv: &mut StateVector, qubit: u32, rng: &mut Rng) -> Result<u8, RockError> {
     let p1 = probability_of_one(sv, qubit)?;
     let outcome: u8 = if rng.next_f64() < p1 { 1 } else { 0 };
 

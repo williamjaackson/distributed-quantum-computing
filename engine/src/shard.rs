@@ -41,7 +41,7 @@
 use crate::complex::{Mat2, C};
 use crate::dispatch::{self, Op};
 use crate::rng::Rng;
-use crate::state::{memory_bytes_required, QsimError, StateVector};
+use crate::state::{memory_bytes_required, RockError, StateVector};
 
 /// Amplitudes per exchange block: 4 Mi amplitudes, 64 MiB.
 ///
@@ -101,9 +101,9 @@ impl Shard {
     ///
     /// Only shard 0 carries the |00...0> amplitude; every other shard starts at
     /// zero, which together form the correct global ground state.
-    pub fn try_new(local_qubits: u32, shard_bits: u32, index: u32) -> Result<Self, QsimError> {
+    pub fn try_new(local_qubits: u32, shard_bits: u32, index: u32) -> Result<Self, RockError> {
         if index >= (1u32 << shard_bits) {
-            return Err(QsimError::InvalidShard { index, shards: 1u32 << shard_bits });
+            return Err(RockError::InvalidShard { index, shards: 1u32 << shard_bits });
         }
         let mut state = StateVector::try_new(local_qubits)?;
         if index != 0 {
@@ -114,7 +114,7 @@ impl Shard {
         let mut scratch: Vec<C> = Vec::new();
         scratch
             .try_reserve_exact(block)
-            .map_err(|_| QsimError::OutOfMemory {
+            .map_err(|_| RockError::OutOfMemory {
                 requested: local_qubits,
                 bytes: (block as u64) * 16,
             })?;
@@ -185,7 +185,7 @@ impl Shard {
     ///
     /// Any global controls must already have been resolved by the caller
     /// deciding whether this shard participates.
-    pub fn apply_local(&mut self, name: &str, qubits: &[u32], params: &[f64]) -> Result<(), QsimError> {
+    pub fn apply_local(&mut self, name: &str, qubits: &[u32], params: &[f64]) -> Result<(), RockError> {
         dispatch::apply_named(&mut self.state, name, qubits, params)
     }
 
@@ -199,12 +199,12 @@ impl Shard {
         params: &[f64],
         controls: &[u32],
         target: u32,
-    ) -> Result<(), QsimError> {
+    ) -> Result<(), RockError> {
         dispatch::apply_base(&mut self.state, base, params, controls, target)
     }
 
     /// Probability that a *local* qubit is 1, summed over this shard only.
-    pub fn local_probability_of_one(&self, qubit: u32) -> Result<f64, QsimError> {
+    pub fn local_probability_of_one(&self, qubit: u32) -> Result<f64, RockError> {
         crate::measure::probability_of_one(&self.state, qubit)
     }
 
@@ -213,7 +213,7 @@ impl Shard {
     /// Every element is a sum over amplitudes, so the orchestrator recovers the
     /// global matrix by adding the shards' contributions — no slice needs to see
     /// any other.
-    pub fn local_reduced_one(&self, qubit: u32) -> Result<[f64; 4], QsimError> {
+    pub fn local_reduced_one(&self, qubit: u32) -> Result<[f64; 4], RockError> {
         crate::measure::reduced_one(&self.state, qubit)
     }
 
@@ -233,7 +233,7 @@ impl Shard {
     /// global marginal, and a shard cannot see it. Splitting the decision from
     /// the mutation is what makes a sharded measurement a measurement of one
     /// state rather than of `K` unrelated ones.
-    pub fn collapse_local(&mut self, qubit: u32, outcome: u8, scale: f64) -> Result<(), QsimError> {
+    pub fn collapse_local(&mut self, qubit: u32, outcome: u8, scale: f64) -> Result<(), RockError> {
         self.state.check_qubit(qubit)?;
         let step = 1usize << qubit;
         for block in self.state.amps_mut().chunks_exact_mut(step << 1) {
@@ -263,11 +263,11 @@ impl Shard {
     /// summary cannot be computed slice-locally. It reuses the same staging
     /// buffer and block loop as a gate exchange, so it costs one pass over the
     /// slice and no extra memory.
-    pub fn dot_scratch(&self, block: usize) -> Result<[f64; 2], QsimError> {
+    pub fn dot_scratch(&self, block: usize) -> Result<[f64; 2], RockError> {
         let span = self.block_amps();
         let start = block * span;
         if start >= self.state.len() {
-            return Err(QsimError::BlockOutOfRange { block, blocks: self.num_blocks() });
+            return Err(RockError::BlockOutOfRange { block, blocks: self.num_blocks() });
         }
         let end = (start + span).min(self.state.len());
         let mut re = 0.0;
@@ -324,13 +324,13 @@ impl Shard {
         block: usize,
         is_low: bool,
         local_cmask: usize,
-    ) -> Result<(), QsimError> {
+    ) -> Result<(), RockError> {
         let op = dispatch::parse_op(name, params)?;
-        let m = op.matrix().ok_or_else(|| QsimError::NotPairable(name.to_string()))?;
+        let m = op.matrix().ok_or_else(|| RockError::NotPairable(name.to_string()))?;
         let bs = self.scratch.len();
         let start = block * bs;
         if start >= self.state.len() {
-            return Err(QsimError::BlockOutOfRange { block, blocks: self.num_blocks() });
+            return Err(RockError::BlockOutOfRange { block, blocks: self.num_blocks() });
         }
         let end = (start + bs).min(self.state.len());
         let n = end - start;
@@ -477,17 +477,17 @@ pub fn plan_gate(
     params: &[f64],
     local_qubits: u32,
     shard_bits: u32,
-) -> Result<Vec<Step>, QsimError> {
+) -> Result<Vec<Step>, RockError> {
     let global_qubits = local_qubits + shard_bits;
     let op = dispatch::parse_op(name, params)?;
     op.check_arity(name, qubits.len())?;
 
     for (i, &q) in qubits.iter().enumerate() {
         if q >= global_qubits {
-            return Err(QsimError::InvalidQubit { qubit: q, n_qubits: global_qubits });
+            return Err(RockError::InvalidQubit { qubit: q, n_qubits: global_qubits });
         }
         if qubits[..i].contains(&q) {
-            return Err(QsimError::DuplicateQubit(q));
+            return Err(RockError::DuplicateQubit(q));
         }
     }
 

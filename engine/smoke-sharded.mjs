@@ -12,10 +12,10 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import {
   initSync, Simulator, Shard, planGate, planShards, baseGates, maxShardQubits, blockAmplitudes,
-} from './pkg/qsim.js';
+} from './pkg/rock.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
-const wasm = initSync({ module: readFileSync(join(here, 'pkg/qsim_bg.wasm')) });
+const wasm = initSync({ module: readFileSync(join(here, 'pkg/rock_bg.wasm')) });
 const BASE = baseGates();
 
 let failures = 0;

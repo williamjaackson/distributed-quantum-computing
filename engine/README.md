@@ -1,4 +1,4 @@
-# qsim — quantum state-vector simulator (Rust → WASM)
+# rock — quantum state-vector simulator (Rust → WASM)
 
 A full state-vector simulator for quantum circuits, compiled to WebAssembly.
 
@@ -89,7 +89,7 @@ them for the orchestrator. The planning logic lives in Rust — and is covered b
 | `src/complex.rs` | `C` (complex) and `Mat2` |
 | `src/dispatch.rs` | gate-name parsing, shared by both execution paths |
 | `src/shard.rs` | shard slices, pair kernel, gate planning |
-| `src/state.rs` | `StateVector`, allocation, `QsimError`, `MAX_QUBITS` |
+| `src/state.rs` | `StateVector`, allocation, `RockError`, `MAX_QUBITS` |
 | `src/gates.rs` | gate kernels and the `Gate` set |
 | `src/measure.rs` | probabilities, marginals, sampling, collapse |
 | `src/circuits.rs` | Bell, GHZ, QFT, Grover, teleportation |
@@ -97,7 +97,7 @@ them for the orchestrator. The planning logic lives in Rust — and is covered b
 | `src/rng.rs` | seedable xorshift64* |
 | `src/lib.rs` | gate-name dispatch, `Simulator`, WASM bindings |
 
-`Simulator` is plain Rust returning `QsimError`; `JsSimulator` is a logic-free
+`Simulator` is plain Rust returning `RockError`; `JsSimulator` is a logic-free
 `wasm-bindgen` wrapper over it. The split matters: a `JsValue` cannot be
 constructed off wasm32 (it panics inside an `extern "C"` shim, which aborts
 instead of unwinding), so putting logic in the wrapper would make every error

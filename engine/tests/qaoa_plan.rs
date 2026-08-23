@@ -6,9 +6,9 @@
 //! here is the same comparison: build a config, run it both ways, and require
 //! the two states to agree to the last bit.
 
-use qsim::qaoa::{run_qaoa, EntitySpec, PenaltySpec, QaoaConfig};
-use qsim::qaoa_plan::{encode, plan, Part};
-use qsim::{dispatch, Simulator};
+use rock::qaoa::{run_qaoa, EntitySpec, PenaltySpec, QaoaConfig};
+use rock::qaoa_plan::{encode, plan, Part};
+use rock::{dispatch, Simulator};
 
 const TOL: f64 = 1e-13;
 
