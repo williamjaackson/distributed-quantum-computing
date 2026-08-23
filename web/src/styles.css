@@ -721,6 +721,22 @@ select.compact {
   gap: 6px;
 }
 
+/* The one status marker in the app. Colour plus a word, never colour alone. */
+.verdict {
+  margin-left: 8px;
+  font-size: 11px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.verdict.is-match {
+  color: var(--success-text, #006300);
+}
+
+.verdict.is-miss {
+  color: var(--critical);
+}
+
 .bit-pills {
   display: flex;
   gap: 5px;
@@ -782,13 +798,23 @@ table.data tr.is-peak td {
 
 /* ---------- legends, notes ---------- */
 
+/* Same shape at the bottom of every view: legend, then one line of facts. */
+.view-footer {
+  display: grid;
+  gap: 2px;
+  padding-top: 10px;
+}
+
+.view-footer .note {
+  margin: 0;
+}
+
 .legend {
   display: flex;
   gap: 14px;
   flex-wrap: wrap;
   font-size: 11px;
   color: var(--text-secondary);
-  padding-top: 6px;
 }
 
 .legend-item {

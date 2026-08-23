@@ -94,13 +94,45 @@ export type InputSpec =
   | (InputBase & { kind: 'bits'; width: Dynamic<number>; default: number })
   | (InputBase & { kind: 'toggle'; default: boolean });
 
-/** One line of the Outputs panel. */
-export interface Readout {
+/** One extra fact a program wants to report, under a shared heading. */
+export interface ResultDetail {
   label: string;
   value: string;
-  hint?: string;
-  /** Renders as the headline figure of the panel. */
-  hero?: boolean;
+  /** Shown on hover. Explanation, not data. */
+  note?: string;
+}
+
+/**
+ * What a program computed, in a shape every program shares.
+ *
+ * Every one of these programs answers the same three questions — what did you
+ * compute, what should it have been, and how sure are you — and they were each
+ * answering them in their own vocabulary, with anywhere from two to six rows in
+ * a different order. So the shape is fixed here and the panel renders it
+ * identically for all of them: you learn to read one program's output and you
+ * can read all of them.
+ *
+ * `expected` is the interesting part of the contract. Nine of these ten
+ * problems have an answer that is knowable some other way — by exhaustive
+ * search, by arithmetic, by an analytic formula — so a program is expected to
+ * say what the answer *should* be and let the panel mark whether the run got
+ * it. A program that cannot know (a coin flip has no right answer) leaves it
+ * out, and that absence is itself informative.
+ */
+export interface ProgramResult {
+  /** The answer, in the program's own terms. One line. */
+  answer: string;
+  /** A qualifier under it: units, or what it was read from. */
+  answerNote?: string;
+  /** What the answer should be, when that is independently knowable. */
+  expected?: string;
+  /** Whether the run agrees with `expected`. */
+  correct?: boolean;
+  /** How strongly the run supports the answer — shots, or a probability. */
+  confidence?: string;
+  confidenceNote?: string;
+  /** Anything else worth reporting. */
+  detail?: ResultDetail[];
 }
 
 /**
@@ -169,7 +201,8 @@ export interface Program {
   /** Human names for the wires, indexed by qubit. */
   wireLabels?(values: InputValues): string[];
   build(values: InputValues, cl: Classical): Iterable<Step>;
-  outputs?(ctx: ReadoutContext): Readout[];
+  /** What the run computed; see [`ProgramResult`]. */
+  result?(ctx: ReadoutContext): ProgramResult;
   /**
    * How good an outcome is, lower being better; `null` disqualifies it.
    *

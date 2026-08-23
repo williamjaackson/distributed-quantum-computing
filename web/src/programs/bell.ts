@@ -6,15 +6,23 @@
  * sphere, while the link between them sits at full strength. All of the
  * information is in the pair, none of it in either half.
  */
-import { cx, h, measure, xg, zg } from '../lib/steps';
-import { bool, str } from '../lib/inputs';
-import type { Program, Readout, Step } from '../lib/types';
+import { cx, h, xg, zg } from '../lib/steps';
+import { str } from '../lib/inputs';
+import type { Program, Step } from '../lib/types';
 
-const VARIANTS: Record<string, { label: string; ket: string }> = {
-  'phi+': { label: 'Φ⁺', ket: '(|00⟩ + |11⟩)/√2' },
-  'phi-': { label: 'Φ⁻', ket: '(|00⟩ − |11⟩)/√2' },
-  'psi+': { label: 'Ψ⁺', ket: '(|01⟩ + |10⟩)/√2' },
-  'psi-': { label: 'Ψ⁻', ket: '(|01⟩ − |10⟩)/√2' },
+/**
+ * The four Bell states.
+ *
+ * `agree` is what the pair *claims*: Φ says the two qubits always match, Ψ says
+ * they always differ. Both are maximally entangled, so the claim is the only
+ * thing that distinguishes them by measurement — the sign does not show up in
+ * any single-basis count at all.
+ */
+const VARIANTS: Record<string, { label: string; ket: string; agree: boolean }> = {
+  'phi+': { label: 'Φ⁺', ket: '(|00⟩ + |11⟩)/√2', agree: true },
+  'phi-': { label: 'Φ⁻', ket: '(|00⟩ − |11⟩)/√2', agree: true },
+  'psi+': { label: 'Ψ⁺', ket: '(|01⟩ + |10⟩)/√2', agree: false },
+  'psi-': { label: 'Ψ⁻', ket: '(|01⟩ − |10⟩)/√2', agree: false },
 };
 
 export const bell: Program = {
@@ -35,7 +43,6 @@ export const bell: Program = {
         label: `${v.label}  ${v.ket}`,
       })),
     },
-    { id: 'measure', kind: 'toggle', label: 'Measure both qubits', default: false },
   ],
   qubits: () => 2,
   wireLabels: () => ['alice', 'bob'],
@@ -49,28 +56,28 @@ export const bell: Program = {
     if (variant === 'phi-' || variant === 'psi-') {
       yield zg(0, { stage: 'Adjust', note: 'Put a minus sign between the two branches' });
     }
-    if (bool(v, 'measure')) {
-      yield measure(0, 'a', { stage: 'Measure', note: 'Alice measures — bob is decided too' });
-      yield measure(1, 'b', { stage: 'Measure', note: 'Bob measures — no surprises left' });
-    }
   },
-  outputs: ({ values, bits, probabilityOf, shots, measurement }) => {
+  result: ({ values, bits, probabilityOf, shots, measurement }) => {
     const variant = VARIANTS[String(values.variant)] ?? VARIANTS['phi+'];
-    const agree = probabilityOf(0) + probabilityOf(3);
-    const rows: Readout[] = [{ label: 'Bell state', value: variant.ket, hero: true }];
-    const total = shots.reduce((a, o) => a + o.count, 0);
+    const drawn = shots.reduce((a, o) => a + o.count, 0) || 1;
     const agreed = shots.reduce((a, o) => a + (o.index === 0 || o.index === 3 ? o.count : 0), 0);
-    rows.push({
-      label: 'Outcomes agreed',
-      value: total > 0 ? `${agreed.toLocaleString()} of ${total.toLocaleString()} shots` : '—',
-      hint: `${(agree * 100).toFixed(1)}% exactly — over ${measurement.taken.toLocaleString()} measurements`,
-    });
-    if (bits.a !== undefined) {
-      rows.push({ label: 'Alice measured', value: `${bits.a}` });
-    }
-    if (bits.b !== undefined) {
-      rows.push({ label: 'Bob measured', value: `${bits.b}` });
-    }
-    return rows;
-  },
+    const shouldAgree = variant.agree;
+    const observed = shouldAgree ? agreed : drawn - agreed;
+
+    return {
+      answer: `${observed.toLocaleString()} of ${measurement.taken.toLocaleString()} shots ${
+        shouldAgree ? 'agreed' : 'disagreed'
+      }`,
+      answerNote: `${variant.ket}`,
+      expected: `all of them ${shouldAgree ? 'agree' : 'disagree'}`,
+      correct: observed === drawn,
+      confidence: `${((probabilityOf(0) + probabilityOf(3)) * 100).toFixed(1)}% agree, exactly`,
+      confidenceNote:
+        'Either qubit on its own is a featureless 50/50. All of the information is in whether they match, which is what makes this entanglement rather than two random bits.',
+      detail:
+        bits.a === undefined
+          ? undefined
+          : [{ label: 'Measured', value: `alice ${bits.a}, bob ${bits.b ?? '?'}` }],
+    };
+  }
 };

@@ -9,8 +9,8 @@
  */
 import { cx, h, measure, u3, xg, zg } from '../lib/steps';
 import { num } from '../lib/inputs';
-import { angle, fixed } from '../lib/format';
-import type { Classical, Program, Readout, Step } from '../lib/types';
+import { angle } from '../lib/format';
+import type { Classical, Program, Step } from '../lib/types';
 
 export const teleport: Program = {
   id: 'teleport',
@@ -67,45 +67,28 @@ export const teleport: Program = {
       yield zg(2, { stage: 'Correct', conditional: 'm0 = 1', note: 'Undo the phase flip' });
     }
   },
-  outputs: ({ values, bits, p1, shots, measurement }) => {
-    const theta = typeof values.theta === 'number' ? values.theta : 0;
+  result: ({ values, bits, p1, shots, measurement }) => {
+    const theta = num(values, 'theta', Math.PI / 3);
     const wanted = Math.sin(theta / 2) ** 2;
-    const got = p1[2];
-    const rows: Readout[] = [
-      {
-        label: 'Bob’s P(1)',
-        value: `${(got * 100).toFixed(2)}%`,
-        hero: true,
-        hint: `payload was ${(wanted * 100).toFixed(2)}%`,
-      },
-    ];
-    if (bits.m0 !== undefined && bits.m1 !== undefined) {
-      rows.push({
-        label: 'Classical bits sent',
-        value: `m0=${bits.m0}, m1=${bits.m1}`,
-        hint: 'the only thing that travelled',
-      });
-      const correction = [bits.m1 ? 'X' : null, bits.m0 ? 'Z' : null].filter(Boolean).join(' then ');
-      rows.push({ label: 'Correction applied', value: correction || 'none needed' });
-    }
-    rows.push({
-      label: 'Error',
-      value: fixed(Math.abs(got - wanted), 6),
-      hint: 'difference from the prepared payload, this run',
-    });
-    // Across shots the corrections differ, and the payload has to arrive
-    // regardless — that is the claim, and one run cannot make it.
-    const total = shots.reduce((a, o) => a + o.count, 0);
-    if (total > 0) {
-      const ones = shots.reduce((a, o) => a + ((o.index >> 2) & 1 ? o.count : 0), 0);
-      rows.push({
-        label: 'Bob measured 1',
-        value: `${((ones / total) * 100).toFixed(1)}%`,
-        hint: `over ${measurement.taken.toLocaleString()} shots, whichever corrections fired — the payload was ${(
-          wanted * 100
-        ).toFixed(1)}%`,
-      });
-    }
-    return rows;
+    const arrived = p1[2];
+    const drawn = shots.reduce((a, o) => a + o.count, 0) || 1;
+    const ones = shots.reduce((a, o) => a + ((o.index >> 2) & 1 ? o.count : 0), 0);
+    const correction = [bits.m1 ? 'X' : null, bits.m0 ? 'Z' : null].filter(Boolean).join(' then ');
+
+    return {
+      answer: `${(arrived * 100).toFixed(2)}% on bob`,
+      answerNote: 'the payload, moved without moving',
+      expected: `${(wanted * 100).toFixed(2)}%`,
+      correct: Math.abs(arrived - wanted) < 1e-9,
+      confidence: `${((ones / drawn) * 100).toFixed(1)}% of shots measured 1`,
+      confidenceNote: `Over ${measurement.taken.toLocaleString()} shots, whichever of the four corrections each one needed. The payload has to arrive every time, not on average — that is the claim.`,
+      detail: [
+        {
+          label: 'Correction',
+          value: correction || 'none needed',
+          note: 'Which of the four errors the measurement left behind, chosen by the two classical bits — the only thing that travelled. Without the correction bob holds the wrong state, and a companion test in the engine checks that teleportation fails without it.',
+        },
+      ],
+    };
   },
 };

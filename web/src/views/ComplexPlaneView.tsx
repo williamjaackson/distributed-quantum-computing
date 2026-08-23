@@ -17,6 +17,7 @@
 import { complex, fixed, ket, pct } from '../lib/format';
 import { useMeasure } from '../lib/useMeasure';
 import { useTip } from '../components/Tooltip';
+import { ViewFooter } from '../components/ViewFooter';
 import type { ViewProps } from './types';
 
 /** Points below this are drawn but not labelled; labels are for the story. */
@@ -146,24 +147,19 @@ export function ComplexPlaneView({ analysis }: ViewProps) {
         })}
       </svg>
 
-      <div className="legend">
-        <span className="legend-item">
-          <span className="swatch" style={{ background: 'var(--blue)', borderRadius: 999 }} />
-          one amplitude — area is its probability
-        </span>
-        <span className="legend-item">angle from the +Re axis is the phase</span>
-        <span className="legend-item">outer ring is magnitude {magnitude(scale)}</span>
-      </div>
-      <p className="note">
-        {supportTruncated
-          ? `The ${support.length} largest of ${amplitudeCount.toLocaleString()} amplitudes`
-          : `${support.length} of ${amplitudeCount.toLocaleString()} amplitudes are non-zero`}
-        {support.length > LABEL_LIMIT
-          ? `; the ${LABEL_LIMIT} largest are labelled, the rest are on hover.`
-          : '.'}{' '}
-        Points sitting on top of each other share an amplitude exactly — that is what a symmetric
-        state looks like.
-      </p>
+      <ViewFooter
+        legend={[
+          { mark: { kind: 'dot', colour: 'var(--blue)' }, label: 'one amplitude — area is its probability' },
+          { mark: { kind: 'line', colour: 'var(--axis)' }, label: `outer ring is magnitude ${magnitude(scale)}` },
+        ]}
+        caption={
+          supportTruncated
+            ? `The ${support.length} largest of ${amplitudeCount.toLocaleString()} amplitudes; the ${LABEL_LIMIT} biggest are labelled.`
+            : `${support.length.toLocaleString()} of ${amplitudeCount.toLocaleString()} amplitudes are non-zero${
+                support.length > LABEL_LIMIT ? `; the ${LABEL_LIMIT} largest are labelled` : ''
+              }.`
+        }
+      />
       {node}
     </div>
   );

@@ -16,6 +16,7 @@ import { controlsOf, targets } from '../lib/steps';
 import { useMeasure } from '../lib/useMeasure';
 import { useTip } from '../components/Tooltip';
 import type { QubitStat } from '../lib/analysis';
+import { ViewFooter } from '../components/ViewFooter';
 import type { ViewProps } from './types';
 
 /** Camera: a touch to the side and a touch above, so all three axes are visible. */
@@ -108,30 +109,16 @@ export function PolarisationView({ timeline, index, analysis }: ViewProps) {
         ))}
       </div>
 
-      <div className="legend">
-        <span className="legend-item">
-          <span className="swatch" style={{ background: 'var(--blue)', borderRadius: 999 }} />
-          state direction — length is how much of a state the qubit has of its own
-        </span>
-        <span className="legend-item">
-          <svg width={22} height={10} aria-hidden>
-            <line
-              x1={1}
-              y1={5}
-              x2={21}
-              y2={5}
-              stroke="var(--axis)"
-              strokeWidth={1.5}
-              strokeDasharray="3 3"
-            />
-          </svg>
-          drop to the equatorial plane, for depth
-        </span>
-        <span className="legend-item">
-          <span className="swatch swatch-ring" style={{ borderColor: 'var(--orange)' }} />
-          touched by this step
-        </span>
-      </div>
+      <ViewFooter
+        legend={[
+          { mark: { kind: 'dot', colour: 'var(--blue)' }, label: 'state direction — length is how much of a state the qubit has of its own' },
+          { mark: { kind: 'line', colour: 'var(--axis)', dashed: true }, label: 'drop to the equatorial plane' },
+          { mark: { kind: 'ring', colour: 'var(--orange)' }, label: 'touched by this step' },
+        ]}
+        caption={`${analysis.qubits.filter((q) => q.r < 0.999).length} of ${
+          analysis.qubits.length
+        } qubits have no full state of their own.`}
+      />
       {node}
     </div>
   );

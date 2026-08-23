@@ -19,9 +19,9 @@
  * consumed and nothing was left behind, which is what "reversible" means when
  * you can watch it.
  */
-import { ccx, cx, h, measure, xg } from '../lib/steps';
+import { ccx, cx, h, xg } from '../lib/steps';
 import { bits, bool, num } from '../lib/inputs';
-import type { GateStep, Program, Readout, Step } from '../lib/types';
+import type { GateStep, Program, Step } from '../lib/types';
 
 /**
  * Qubit layout for `n`-bit inputs: a carry in, the two registers, a carry out.
@@ -85,7 +85,6 @@ export const adder: Program = {
       default: false,
       hint: 'adds every A to B in one pass',
     },
-    { id: 'measure', kind: 'toggle', label: 'Measure the sum', default: false },
   ],
   qubits: (v) => layout(num(v, 'width', 2)).total,
   // How far the sum register is from the arithmetic answer. Zero for every shot
@@ -132,84 +131,73 @@ export const adder: Program = {
       yield* uma(chain[i], b[i], chain[i + 1], `Sum down · bit ${i}`);
     }
 
-    if (bool(v, 'measure')) {
-      for (let i = 0; i < n; i++) yield measure(b[i], `s${i}`, { stage: 'Read out' });
-      yield measure(carryOut, `s${n}`, { stage: 'Read out' });
-    }
   },
-  outputs: ({ values, readRegister, shots, measurement }) => {
-    const n = typeof values.width === 'number' ? values.width : 2;
+  result: ({ values, readRegister, shots, measurement }) => {
+    const n = num(values, 'width', 2);
     const { a, b, carryOut } = layout(n);
     const mask = (1 << n) - 1;
-    const av = (typeof values.a === 'number' ? values.a : 0) & mask;
-    const bv = (typeof values.b === 'number' ? values.b : 0) & mask;
+    const av = bits(values, 'a', n);
+    const bv = bits(values, 'b', n);
     const superpose = values.superpose === true;
     const restored = readRegister(a);
-    const rows: Readout[] = [];
 
-    /** The sum register's value in one measured outcome. */
     const sumOf = (state: number) => {
       let v = 0;
       b.forEach((q, i) => (v |= ((state >> q) & 1) << i));
       return v | (((state >> carryOut) & 1) << n);
     };
-    const bySum = new Map<number, number>();
+    const sums = new Map<number, number>();
     for (const o of shots) {
       const key = sumOf(o.index);
-      bySum.set(key, (bySum.get(key) ?? 0) + o.count);
+      sums.set(key, (sums.get(key) ?? 0) + o.count);
     }
-    const total = [...bySum.values()].reduce((x, y) => x + y, 0) || 1;
+    const ordered = [...sums.keys()].sort((x, y) => x - y);
 
-    if (superpose) {
-      rows.push({
-        label: 'Sums held at once',
-        value: `${bv} … ${bv + mask}`,
-        hero: true,
-        hint: `every A added to B = ${bv}, in one pass over ${mask + 1} values`,
-      });
-      rows.push({
-        label: 'Sums actually drawn',
-        value: [...bySum.keys()].sort((x, y) => x - y).join(', '),
-        hint: `over ${total.toLocaleString()} shots — one measurement collapses to one of them`,
-      });
-    } else {
-      const drawn = [...bySum].sort((x, y) => y[1] - x[1])[0];
-      rows.push({
-        label: `${av} + ${bv}`,
-        value: drawn ? `${drawn[0]}` : '—',
-        hero: true,
-        hint:
-          drawn && drawn[0] !== av + bv
-            ? `expected ${av + bv}`
-            : `all ${measurement.taken.toLocaleString()} shots read sum${n}…sum0 the same way`,
-      });
-      if (bySum.size > 1) {
-        rows.push({
-          label: 'Disagreeing shots',
-          value: `${bySum.size} different sums`,
-          hint: 'reversible arithmetic on definite inputs should give exactly one answer',
-        });
-      }
-    }
-    rows.push({
-      label: 'A afterwards',
-      // In superposition every value of A is equally likely, so the likeliest
-      // one is a coin toss between ties and reporting it would say nothing.
-      // What matters is that the spread came back intact.
-      value: superpose ? `all ${mask + 1} values` : `${restored.value}`,
-      hint: superpose
-        ? restored.confidence <= 1.5 / (mask + 1)
-          ? 'still spread evenly — the circuit never consumed it'
-          : 'the spread came back uneven, which it should not have'
-        : restored.value === av
-          ? 'returned unchanged, as a reversible circuit must'
-          : `expected ${av} — A should come back untouched`,
-    });
-    rows.push({
-      label: 'Qubits used',
-      value: `${2 * n + 2}`,
-      hint: `a naive adder with a wire per carry would need ${4 * n + 1}`,
-    });
-    return rows;
+    return superpose
+      ? {
+          answer: ordered.join(', '),
+          answerNote: `every A added to B = ${bv}, in one pass`,
+          expected: Array.from({ length: mask + 1 }, (_, i) => i + bv).join(', '),
+          correct:
+            ordered.length === mask + 1 && ordered.every((v, i) => v === i + bv),
+          confidence: `${sums.size} sums over ${measurement.taken.toLocaleString()} shots`,
+          confidenceNote:
+            'Each shot collapses to one branch, so a single measurement gives one of these sums. The register held all of them at once until it was looked at.',
+          detail: [
+            { label: 'A afterwards', value: `all ${mask + 1} values`, note: 'The circuit never consumed it.' },
+            {
+              label: 'Qubits used',
+              value: `${2 * n + 2}`,
+              note: `A naive adder with a wire per output bit and per carry would need ${4 * n + 1}. Cuccaro's construction writes the sum into B and unwrites every carry, which is why the second half of the circuit is the first half backwards.`,
+            },
+          ],
+        }
+      : {
+          answer: `${[...sums].sort((x, y) => y[1] - x[1])[0]?.[0] ?? '—'}`,
+          answerNote: `${av} + ${bv}, read from sum${n}…sum0`,
+          expected: `${av + bv}`,
+          correct: sums.size === 1 && ordered[0] === av + bv,
+          confidence:
+            sums.size === 1
+              ? `all ${measurement.taken.toLocaleString()} shots agreed`
+              : `${sums.size} different sums drawn`,
+          confidenceNote:
+            'Reversible arithmetic on definite inputs is deterministic: every shot must give the same sum, and more than one would mean something is wrong.',
+          detail: [
+            {
+              label: 'A afterwards',
+              value: `${restored.value}`,
+              note:
+                restored.value === av
+                  ? 'Returned exactly as it went in, which is what reversible means when you can watch it.'
+                  : `Expected ${av} — A should come back untouched.`,
+            },
+            {
+              label: 'Qubits used',
+              value: `${2 * n + 2}`,
+              note: `A naive adder with a wire per output bit and per carry would need ${4 * n + 1}. Cuccaro's construction writes the sum into B and unwrites every carry, which is why the second half of the circuit is the first half backwards.`,
+            },
+          ],
+        };
   },
 };

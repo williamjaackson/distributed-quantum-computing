@@ -47,6 +47,35 @@ engine.
 | `views/*.tsx` | one projection per file |
 | `verify.mjs` | every program against the engine, under Node |
 
+## One shape for every program
+
+Each program used to invent its own output rows — ten programs, ten
+vocabularies, anywhere from two to six rows in a different order — so reading a
+new one meant working out its language first. They all answer the same three
+questions, so the shape is fixed and only the words inside it change:
+
+| | |
+| --- | --- |
+| **Answer** | what the run computed, in the program's terms |
+| **Expected** | what it should be, when that is knowable another way, with ✓ / ✗ |
+| **Confidence** | how strongly the shots support it |
+
+`expected` is the interesting part of the contract. Nine of these ten problems
+have an answer that is knowable independently — by exhaustive search, by
+arithmetic, from an analytic formula — so a program says what the answer *should*
+be and the panel marks whether the run got it. A coin flip cannot, and leaves it
+out; that absence is itself the point.
+
+Measurement is not a program's business either. Seven of them used to carry
+their own "measure at the end" toggle, which duplicated the transport's Measure
+button in seven slightly different ways. They are all unitary now except
+teleportation, whose measurements are part of the algorithm rather than a display
+option.
+
+Views share a footer for the same reason: one component renders the legend from
+a table of marks and one line of facts, so the bottom of the screen does not
+change shape when you switch tabs.
+
 ## Programs
 
 A program is a *generator* of steps rather than a list, so a step can depend on

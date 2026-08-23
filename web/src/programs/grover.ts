@@ -14,20 +14,14 @@
  * control count from the call, so that is one gate at any width rather than a
  * decomposition with ancillas.
  */
-import { h, mcz, measure, xg } from '../lib/steps';
-import { bits, bool, num, str } from '../lib/inputs';
-import type { Program, Readout, Step } from '../lib/types';
+import { h, mcz, xg } from '../lib/steps';
+import { bits, num, str } from '../lib/inputs';
+import { ket } from '../lib/format';
+import type { Program, Step } from '../lib/types';
 
 /** Optimal round count for one marked item in 2^n — floor(pi/4 * sqrt(N)). */
 function optimalRounds(n: number): number {
   return Math.max(1, Math.floor((Math.PI / 4) * Math.sqrt(1 << n)));
-}
-
-/** Gates one round costs, for the estimate shown beside the round count. */
-function gatesPerRound(n: number, marked: number): number {
-  let zeros = 0;
-  for (let q = 0; q < n; q++) if (((marked >> q) & 1) === 0) zeros++;
-  return 2 * zeros + 1 + 4 * n + 1;
 }
 
 export const grover: Program = {
@@ -69,7 +63,6 @@ export const grover: Program = {
         { value: '2', label: '2' },
       ],
     },
-    { id: 'measure', kind: 'toggle', label: 'Measure at the end', default: false },
   ],
   qubits: (v) => num(v, 'qubits', 4),
   // The marked state or not: a search has exactly one thing it was looking for.
@@ -116,43 +109,40 @@ export const grover: Program = {
       }
     }
 
-    if (bool(v, 'measure')) {
-      for (let q = 0; q < n; q++) yield measure(q, `c${q}`, { stage: 'Measure' });
-    }
   },
-  outputs: ({ nQubits, amplitudeCount, values, probabilityOf, shots, measurement }) => {
-    const marked = (typeof values.marked === 'number' ? values.marked : 0) & (amplitudeCount - 1);
-    let bitstring = '';
-    for (let q = nQubits - 1; q >= 0; q--) bitstring += (marked >> q) & 1;
-    const flat = 1 / amplitudeCount;
-    const optimal = optimalRounds(nQubits);
-    const total = shots.reduce((a, o) => a + o.count, 0) || 1;
+  result: ({ nQubits, amplitudeCount, values, probabilityOf, shots, measurement }) => {
+    const marked = bits(values, 'marked', nQubits);
+    const drawn = shots.reduce((a, o) => a + o.count, 0) || 1;
     const hits = shots.find((o) => o.index === marked)?.count ?? 0;
-    const rows: Readout[] = [
-      {
-        label: 'Measured the marked state',
-        value: `${hits.toLocaleString()} of ${measurement.taken.toLocaleString()} shots`,
-        hero: true,
-        hint: `${((hits / total) * 100).toFixed(1)}% — searching at random would give ${(
-          flat * 100
-        ).toFixed(2)}%`,
-      },
-      {
-        label: 'Looking for',
-        value: `|${bitstring}⟩ = ${marked} of ${amplitudeCount.toLocaleString()}`,
-      },
-      {
-        label: 'P(marked), exactly',
-        value: `${(probabilityOf(marked) * 100).toFixed(1)}%`,
-        hint: `${(probabilityOf(marked) / flat).toFixed(0)}× the even draw it started from`,
-      },
-      {
-        label: 'Optimal rounds',
-        value: `${optimal}`,
-        hint: `≈ ${(optimal * gatesPerRound(nQubits, marked)).toLocaleString()} gates; a classical
-               search needs ${Math.round(amplitudeCount / 2).toLocaleString()} guesses on average`,
-      },
-    ];
-    return rows;
+    const peak = shots[0]?.index ?? 0;
+    const optimal = optimalRounds(nQubits);
+    const flat = 1 / amplitudeCount;
+
+    return {
+      answer: ket(peak, nQubits),
+      answerNote: `${(((shots[0]?.count ?? 0) / drawn) * 100).toFixed(1)}% of shots gave it`,
+      expected: ket(marked, nQubits),
+      correct: peak === marked,
+      confidence: `${hits.toLocaleString()} of ${measurement.taken.toLocaleString()} shots found it`,
+      confidenceNote: `${((hits / drawn) * 100).toFixed(1)}% against the ${(flat * 100).toFixed(
+        2,
+      )}% an unamplified search would give.`,
+      detail: [
+        {
+          label: 'Optimal rounds',
+          value: `${optimal}`,
+          note: `Each round rotates the state a fixed angle toward the answer, so the count is floor(π/4·√N) and overshooting really does undo it. A classical search needs ${Math.round(
+            amplitudeCount / 2,
+          ).toLocaleString()} guesses on average.`,
+        },
+        {
+          label: 'P(marked)',
+          value: `${(probabilityOf(marked) * 100).toFixed(1)}%`,
+          note: `${(probabilityOf(marked) / flat).toFixed(
+            0,
+          )}× the even draw it started from. This is the exact amplitude, not a count of shots.`,
+        },
+      ],
+    };
   },
 };

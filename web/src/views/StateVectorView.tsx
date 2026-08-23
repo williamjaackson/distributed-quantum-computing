@@ -16,6 +16,7 @@ import type { BasisEntry } from '../lib/analysis';
 import { bitString, complex, fixed, ket, pct } from '../lib/format';
 import { useMeasure } from '../lib/useMeasure';
 import { useTip } from '../components/Tooltip';
+import { ViewFooter } from '../components/ViewFooter';
 import type { ViewProps } from './types';
 
 /** Fixed y-axis stops. Snapping to these keeps the axis from twitching on every
@@ -166,22 +167,6 @@ export function StateVectorView({ analysis }: ViewProps) {
         ))}
       </svg>
 
-      <p className="note">
-        {supportTruncated
-          ? `The ${support.length} largest of ${count.toLocaleString()} basis states — the rest are below the recorded floor.`
-          : `${support.length.toLocaleString()} of ${count.toLocaleString()} basis states carry any amplitude.`}
-        {binned &&
-          ` More states than pixels, so each mark is the largest of the ${Math.ceil(
-            support.length / marks.length,
-          )} or so sharing its column.`}
-        {!showDials && support.length > 0 && ' Phases are too dense to dial here — see the table.'}
-        {significant.length < support.length &&
-          showDials &&
-          ` Dials shown for the ${
-            significant.length === 1 ? 'one state' : `${significant.length} states`
-          } above 0.2%.`}
-      </p>
-
       <table className="data">
         <thead>
           <tr>
@@ -209,9 +194,21 @@ export function StateVectorView({ analysis }: ViewProps) {
           )}
         </tbody>
       </table>
-      {support.length > 8 && (
-        <p className="note">The 8 largest of {support.length.toLocaleString()} occupied states.</p>
-      )}
+      <ViewFooter
+        caption={
+          <>
+            {supportTruncated
+              ? `The ${support.length} largest of ${count.toLocaleString()} basis states — the rest are below the recorded floor.`
+              : `${support.length.toLocaleString()} of ${count.toLocaleString()} basis states carry any amplitude.`}
+            {binned &&
+              ` More states than pixels, so each mark is the largest of the ${Math.ceil(
+                support.length / marks.length,
+              )} or so sharing its column.`}
+            {!showDials && support.length > 0 && ' Phases are too dense to dial — see the table.'}
+            {support.length > 8 && ' Tabled: the 8 largest.'}
+          </>
+        }
+      />
       {node}
     </div>
   );

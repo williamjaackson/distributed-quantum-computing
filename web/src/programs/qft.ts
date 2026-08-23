@@ -9,7 +9,7 @@
 import { cp, h, swap, xg } from '../lib/steps';
 import { bits, num } from '../lib/inputs';
 import { angle } from '../lib/format';
-import type { Program, Readout, Step } from '../lib/types';
+import type { Program, Step } from '../lib/types';
 
 export const qft: Program = {
   id: 'qft',
@@ -59,35 +59,32 @@ export const qft: Program = {
       yield swap(i, n - 1 - i, { stage: 'Reverse', note: 'Undo the bit reversal' });
     }
   },
-  outputs: ({ nQubits, amplitudeCount, values, probabilities, entropyBits, shots, measurement }) => {
-    const k = (typeof values.input === 'number' ? values.input : 0) & ((1 << nQubits) - 1);
+  result: ({ nQubits, amplitudeCount, values, probabilities, entropyBits, shots, measurement }) => {
+    const k = (typeof values.input === 'number' ? values.input : 0) & (amplitudeCount - 1);
     const flat = 1 / amplitudeCount;
     let worst: number | null = null;
     if (probabilities) {
       worst = 0;
       for (const p of probabilities) worst = Math.max(worst, Math.abs(p - flat));
     }
-    const rows: Readout[] = [
-      { label: 'Input', value: `|${k}⟩`, hero: true },
-      {
-        label: 'Distribution',
-        value:
-          worst === null
-            ? 'too large to check in full'
-            : worst < 1e-9
-              ? 'perfectly flat'
-              : `off flat by ${(worst * 100).toFixed(2)}%`,
-        hint: `every state at ${(flat * 100).toFixed(1)}%`,
-      },
-    ];
-    if (entropyBits !== null) {
-      rows.push({ label: 'Entropy', value: `${entropyBits.toFixed(2)} of ${nQubits} bits` });
-    }
-    rows.push({
-      label: 'Outcomes measured',
-      value: `${shots.length} of ${amplitudeCount.toLocaleString()}`,
-      hint: `over ${measurement.taken.toLocaleString()} shots — a flat distribution hides the input completely`,
-    });
-    return rows;
+
+    return {
+      answer: `flat over ${amplitudeCount.toLocaleString()} outcomes`,
+      answerNote: `every one at ${(flat * 100).toFixed(1)}%`,
+      expected: 'perfectly flat',
+      correct: worst === null ? undefined : worst < 1e-9,
+      confidence:
+        entropyBits === null
+          ? `${shots.length} of ${amplitudeCount.toLocaleString()} outcomes drawn`
+          : `${entropyBits.toFixed(2)} of ${nQubits} bits of entropy`,
+      confidenceNote: `A flat distribution hides the input completely: ${measurement.taken.toLocaleString()} shots of it say nothing about which |k⟩ went in. All of the information moved into the phases, which is what the complex-plane view is for.`,
+      detail: [
+        {
+          label: 'Input',
+          value: `|${k}⟩`,
+          note: 'Applied to |k⟩ the transform gives every amplitude the same magnitude and a phase that winds round the circle k times. Period finding, and so Shor’s algorithm, is built on exactly that.',
+        },
+      ],
+    };
   },
 };

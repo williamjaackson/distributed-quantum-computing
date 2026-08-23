@@ -5,9 +5,9 @@
  * agreement between every qubit in the register. On the qubit map the links
  * light up one at a time as the chain is built.
  */
-import { cx, h, measure } from '../lib/steps';
-import { bool, num } from '../lib/inputs';
-import type { Program, Readout, Step } from '../lib/types';
+import { cx, h } from '../lib/steps';
+import { num } from '../lib/inputs';
+import type { Program, Step } from '../lib/types';
 
 export const ghz: Program = {
   id: 'ghz',
@@ -28,7 +28,6 @@ export const ghz: Program = {
       capByCeiling: true,
       hint: 'past 14 the frames hold summaries rather than whole states',
     },
-    { id: 'measure', kind: 'toggle', label: 'Measure the first qubit', default: false },
   ],
   qubits: (v) => num(v, 'qubits', 5),
   *build(v): Iterable<Step> {
@@ -37,38 +36,26 @@ export const ghz: Program = {
     for (let q = 1; q < n; q++) {
       yield cx(q - 1, q, { stage: 'Extend', note: `Extend the agreement to qubit ${q}` });
     }
-    if (bool(v, 'measure')) {
-      yield measure(0, 'c0', {
-        stage: 'Measure',
-        note: 'One measurement decides the entire register',
-      });
-    }
   },
-  outputs: ({ nQubits, amplitudeCount, probabilityOf, bits, shots, measurement }) => {
+  result: ({ nQubits, amplitudeCount, probabilityOf, shots, measurement }) => {
     const all1 = amplitudeCount - 1;
-    const rows: Readout[] = [
-      {
-        label: 'Register',
-        value: `${nQubits} qubits, ${amplitudeCount.toLocaleString()} amplitudes`,
-        hero: true,
-      },
-      {
-        label: 'All agreed',
-        value:
-          shots.length === 0
-            ? '—'
-            : `${shots
-                .filter((o) => o.index === 0 || o.index === all1)
-                .reduce((a, o) => a + o.count, 0)
-                .toLocaleString()} of ${measurement.taken.toLocaleString()} shots`,
-        hint: `${((probabilityOf(0) + probabilityOf(all1)) * 100).toFixed(1)}% exactly; ${
-          shots.length
-        } distinct outcome${shots.length === 1 ? '' : 's'} out of ${amplitudeCount.toLocaleString()}`,
-      },
-    ];
-    if (bits.c0 !== undefined) {
-      rows.push({ label: 'Collapsed to', value: bits.c0 === 1 ? '|1…1⟩' : '|0…0⟩' });
-    }
-    return rows;
+    const drawn = shots.reduce((a, o) => a + o.count, 0) || 1;
+    const agreed = shots.reduce((a, o) => a + (o.index === 0 || o.index === all1 ? o.count : 0), 0);
+
+    return {
+      answer: `${agreed.toLocaleString()} of ${measurement.taken.toLocaleString()} shots agreed`,
+      answerNote: `all ${nQubits} qubits the same, every time`,
+      expected: 'all of them agree',
+      correct: agreed === drawn,
+      confidence: `${((probabilityOf(0) + probabilityOf(all1)) * 100).toFixed(1)}% agree, exactly`,
+      confidenceNote: `Only two of the ${amplitudeCount.toLocaleString()} basis states ever carry any amplitude, however long the chain gets — and no individual qubit is any less undecided for it.`,
+      detail: [
+        {
+          label: 'Outcomes seen',
+          value: `${shots.length} of ${amplitudeCount.toLocaleString()}`,
+          note: 'Two, for a GHZ state: all-zeros and all-ones. Everything else is ruled out by the entanglement.',
+        },
+      ],
+    };
   },
 };

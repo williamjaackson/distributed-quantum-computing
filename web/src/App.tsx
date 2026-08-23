@@ -15,7 +15,7 @@ import { engineLimitsIfReady, loadWasm } from './lib/backend';
 import { ceiling, runProgram } from './lib/runner';
 import { defaultValues } from './lib/inputs';
 import { ket } from './lib/format';
-import type { InputValue, InputValues, Readout, ReadoutContext, Timeline } from './lib/types';
+import type { InputValue, InputValues, ProgramResult, ReadoutContext, Timeline } from './lib/types';
 import { usePlayer } from './lib/usePlayer';
 import { PROGRAMS, programById } from './programs';
 import { VIEWS, viewById } from './views';
@@ -200,8 +200,8 @@ export function App() {
     return () => window.removeEventListener('keydown', onKey);
   }, [player, canMeasure, requestMeasure]);
 
-  const readouts: Readout[] = useMemo(() => {
-    if (!timeline || !finalAnalysis || !finalFrame || !program.outputs) return [];
+  const result: ProgramResult | null = useMemo(() => {
+    if (!timeline || !finalAnalysis || !finalFrame || !program.result) return null;
     const analysis = finalAnalysis;
     const byIndex = new Map(analysis.support.map((e) => [e.index, e.prob]));
     const ctx: ReadoutContext = {
@@ -220,11 +220,11 @@ export function App() {
       readRegister: (qubits) => readRegister(analysis, qubits),
     };
     try {
-      return program.outputs(ctx);
+      return program.result(ctx);
     } catch {
       // A readout is a convenience, not part of the run — never let one take the
       // page down.
-      return [];
+      return null;
     }
   }, [timeline, finalAnalysis, finalFrame, program]);
 
@@ -414,7 +414,7 @@ export function App() {
             <h2 className="card-title">Outputs</h2>
             {timeline && frame ? (
               <OutputsPanel
-                readouts={readouts}
+                result={result}
                 bits={finalFrame?.bits ?? {}}
                 norm={frame.norm}
                 collapsed={

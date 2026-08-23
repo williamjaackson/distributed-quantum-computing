@@ -18,6 +18,7 @@ import { fixed, pct } from '../lib/format';
 import { controlsOf, targets } from '../lib/steps';
 import { useMeasure } from '../lib/useMeasure';
 import { useTip } from '../components/Tooltip';
+import { ViewFooter } from '../components/ViewFooter';
 import type { ViewProps } from './types';
 
 const R_QUBIT = 26;
@@ -216,38 +217,26 @@ export function QubitMapView({ timeline, index, analysis }: ViewProps) {
         })}
       </svg>
 
-      <div className="legend">
-        <span className="legend-item">
-          <span className="swatch" style={{ background: 'var(--surface-2)', border: '1px solid var(--axis)' }} />
-          |0⟩
-        </span>
-        <span className="legend-item">
-          <span className="swatch" style={{ background: 'var(--blue)' }} />
-          |1⟩ — partial fill is P(1)
-        </span>
-        <span className="legend-item">
-          <svg width={26} height={10} aria-hidden>
-            <line x1={1} y1={5} x2={25} y2={5} stroke="var(--blue)" strokeWidth={4} strokeOpacity={0.7} />
-          </svg>
-          correlated pair — thicker is stronger
-        </span>
-        <span className="legend-item">
-          <span className="swatch swatch-ring" style={{ borderColor: 'var(--orange)' }} />
-          touched by this step
-        </span>
-      </div>
-      <p className="note">
-        {links === null
-          ? timeline.detail.linksReason === 'sharded'
-            ? 'Links off — no slice-local form when sharded. The dials are exact.'
-            : `Links off — too costly at ${nQubits} qubits. The dials are exact.`
-          : chords.length === 0
-            ? 'No correlations — every qubit is independent of the others.'
-            : `${total} correlated pair${total === 1 ? '' : 's'}, strongest ${fixed(
-                chords[total - 1].c,
-                3,
-              )} of 1.${total > drawn.length ? ` Drawing the ${drawn.length} strongest.` : ''}`}
-      </p>
+      <ViewFooter
+        legend={[
+          { mark: { kind: 'fill', colour: 'var(--axis)', empty: true }, label: '|0⟩' },
+          { mark: { kind: 'fill', colour: 'var(--blue)' }, label: '|1⟩ — partial fill is P(1)' },
+          { mark: { kind: 'line', colour: 'var(--blue)' }, label: 'correlated — thicker is stronger' },
+          { mark: { kind: 'ring', colour: 'var(--orange)' }, label: 'touched by this step' },
+        ]}
+        caption={
+          links === null
+            ? timeline.detail.linksReason === 'sharded'
+              ? 'Links off while sharded. The dials are exact.'
+              : `Links off — too costly at ${nQubits} qubits. The dials are exact.`
+            : chords.length === 0
+              ? 'No correlations — every qubit is independent of the others.'
+              : `${total} correlated pair${total === 1 ? '' : 's'}, strongest ${fixed(
+                  chords[total - 1].c,
+                  3,
+                )} of 1${total > drawn.length ? `, drawing the ${drawn.length} strongest` : ''}.`
+        }
+      />
       {node}
     </div>
   );
