@@ -27,7 +27,7 @@ import { PeerMesh } from './mesh';
 import { PeerRpc, respondTo } from './rpc';
 import type { SignalingEvents } from './signaling-client';
 import { SignalingClient } from './signaling-client';
-import type { BestShot, SharedResult, SharedState, WorkReply, WorkRequest } from './protocol';
+import type { BestShot, SharedResult, SharedStageLayout, SharedState, WorkReply, WorkRequest } from './protocol';
 import { runKey, WORK_SHOTS } from './protocol';
 import { flatFromOutcomes, RESULT_OUTCOME_CAP } from './shots';
 
@@ -103,7 +103,7 @@ export class Session {
   // Mirrored from the host, when viewing.
   shared: SharedState | null = null;
   sharedKey: string | null = null;
-  view: string | null = null;
+  layout: SharedStageLayout | null = null;
   playhead = 0;
   result: SharedResult | null = null;
   working: WorkStatus | null = null;
@@ -232,8 +232,8 @@ export class Session {
     return key;
   }
 
-  broadcastView(view: string): void {
-    this.#cast({ t: 'view', view });
+  broadcastLayout(layout: SharedStageLayout): void {
+    this.#cast({ t: 'layout', layout: layout as unknown as Record<string, unknown> });
   }
 
   broadcastPlayhead(index: number): void {
@@ -351,8 +351,8 @@ export class Session {
         this.shared = message.state as unknown as SharedState;
         this.sharedKey = message.key as string;
         break;
-      case 'view':
-        this.view = message.view as string;
+      case 'layout':
+        this.layout = message.layout as unknown as SharedStageLayout;
         break;
       case 'playhead':
         this.playhead = message.index as number;

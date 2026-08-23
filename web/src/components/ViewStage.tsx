@@ -32,6 +32,7 @@ import { Fragment, useCallback, useRef, useState } from 'react';
 import type { CSSProperties, DragEvent, KeyboardEvent, PointerEvent, ReactNode } from 'react';
 import { VIEWS, viewById } from '../views';
 import type { ViewDef } from '../views/types';
+import type { SharedStageLayout } from '../net/protocol';
 import { Info } from './Info';
 
 /**
@@ -90,6 +91,9 @@ interface Layout {
 
 export interface StageLayout {
   rows: Row[];
+  snapshot: SharedStageLayout;
+  /** Replace the arrangement with a host-supplied shared layout. */
+  follow: (layout: SharedStageLayout) => void;
   /** Collapse to a single pane showing `id`. */
   showOnly: (id: string) => void;
   /**
@@ -237,9 +241,39 @@ export function useStageLayout(initial: string): StageLayout {
       setState((s) => ({ rows: s.rows.map((x, i) => ({ ...x, h: heights[i] })) })),
     [],
   );
+  const follow = useCallback((incoming: SharedStageLayout) => {
+    const known = new Set(VIEWS.map((v) => v.id));
+    const used = new Set<string>();
+    const rows: Row[] = [];
+    for (const source of incoming.rows.slice(0, VIEWS.length)) {
+      const panes: Pane[] = [];
+      for (const pane of source.panes.slice(0, VIEWS.length)) {
+        if (!known.has(pane.id) || used.has(pane.id)) continue;
+        used.add(pane.id);
+        panes.push({
+          id: pane.id,
+          w: Number.isFinite(pane.w) && pane.w > 0 ? pane.w : 1,
+          z: SCALES.includes(pane.z) ? pane.z : 1,
+        });
+      }
+      if (panes.length > 0) {
+        rows.push(row(panes, Number.isFinite(source.h) && source.h > 0 ? source.h : 1));
+      }
+    }
+    if (rows.length > 0) setState({ rows });
+  }, []);
+
+  const snapshot: SharedStageLayout = {
+    rows: state.rows.map((r) => ({
+      h: r.h,
+      panes: r.panes.map(({ id, w, z }) => ({ id, w, z })),
+    })),
+  };
 
   return {
     rows: state.rows,
+    snapshot,
+    follow,
     showOnly,
     suggest,
     toggle,

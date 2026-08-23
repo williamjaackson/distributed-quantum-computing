@@ -17,6 +17,11 @@ viewer takes a share of the requested shots; the host re-takes work from peers
 that disconnect, merges all returned histograms, and broadcasts the merged
 result back to the room.
 
+The host's complete stage layout is mirrored too: split rows, pane order,
+relative pane sizes, and per-pane zoom. Viewer controls remain locked. The
+Sharing card exposes current machine and per-machine shot capacity and a
+clearly unavailable preview of Expand-mode shard, qubit, and memory capacity.
+
 Signaling is served at `/ws` by Vite in development and preview, so there is no
 second process or relay address in ordinary links. `npm run signal` starts the
 standalone relay for deployments that need one; pass its address with the

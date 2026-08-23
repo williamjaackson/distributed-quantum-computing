@@ -1119,6 +1119,36 @@ svg text.mono {
   margin: 0 0 8px;
 }
 
+.capacity-list {
+  margin: 12px 0 0;
+}
+
+.capacity-list > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 6px 0;
+  border-top: 1px solid var(--line);
+}
+
+.capacity-list dt {
+  color: var(--muted);
+}
+
+.capacity-list dd {
+  margin: 0;
+  text-align: right;
+}
+
+.capacity-details {
+  margin-top: 10px;
+}
+
+.capacity-details summary {
+  cursor: pointer;
+  color: var(--muted);
+}
+
 .session-room strong {
   font-family: var(--mono);
   letter-spacing: 0.08em;

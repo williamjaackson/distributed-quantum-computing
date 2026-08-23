@@ -134,13 +134,14 @@ test('sharing creates a room and a ?j= link', async () => {
   assert.ok(host.link.includes(`?j=${host.room}`));
 });
 
-test('a viewer mirrors state, view and playhead — including what predates its join', async () => {
+test('a viewer mirrors state, stage layout and playhead — including what predates its join', async () => {
   const hub = makeHub();
   const host = new Session(pair(hub));
   await host.share();
   // Broadcast *before* anyone is connected: a late joiner must still get it.
   const key = host.broadcastState(STATE);
-  host.broadcastView('state');
+  const layout = { rows: [{ h: 1, panes: [{ id: 'state', w: 1, z: 1 }] }] };
+  host.broadcastLayout(layout);
   host.broadcastPlayhead(3);
 
   const viewer = new Session(pair(hub));
@@ -150,7 +151,7 @@ test('a viewer mirrors state, view and playhead — including what predates its 
   assert.equal(viewer.role, 'viewer');
   assert.deepEqual(viewer.shared, STATE);
   assert.equal(viewer.sharedKey, key);
-  assert.equal(viewer.view, 'state');
+  assert.deepEqual(viewer.layout, layout);
   assert.equal(viewer.playhead, 3);
   assert.equal(host.workers(), 1);
 

@@ -30,6 +30,13 @@ read-only mode. When the host measures, the shot count is divided across the
 host and connected viewers; their histograms are merged and the same result is
 shown everywhere.
 
+The Sharing card reports the live machine count, shot split, and register
+capacity. It also previews the power-of-two shard group, qubit ceiling, and RAM
+represented by the planned Expand mode. Expand is shown as unavailable until
+cross-machine shard transport is implemented; selecting Shots never claims to
+increase register capacity. Tiled stage layouts are shared in full, including
+pane order, divider proportions, and per-pane zoom.
+
 The Vite development and preview servers include the WebSocket signaling relay
 at `/ws`, so normal local and LAN sharing needs only the one web-server process.
 Vite listens on the LAN; open the generated link on another machine connected

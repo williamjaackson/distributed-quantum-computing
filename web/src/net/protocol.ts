@@ -14,7 +14,7 @@
  *
  * 3. **Session notifies** — fire-and-forget host→viewer messages (no `id`)
  *    that mirror the host's UI state: what is running (`state`), where the
- *    playhead is (`playhead`), which view is up (`view`), and what the merged
+ *    playhead is (`playhead`), how the tiled stage is arranged (`layout`), and what the merged
  *    measurement came to (`result`). A viewer needs nothing else: the engine
  *    is deterministic, so from `SharedState` alone it reproduces the host's
  *    entire timeline locally, frames and all.
@@ -51,6 +51,14 @@ export interface SharedState {
   shots: number;
   seed: number;
   measureAtEnd: boolean;
+}
+
+/** The host's complete tiled stage arrangement, mirrored read-only by viewers. */
+export interface SharedStageLayout {
+  rows: Array<{
+    h: number;
+    panes: Array<{ id: string; w: number; z: number }>;
+  }>;
 }
 
 export type BestShot = { index: number; score: number; count: number; rank: number } | null;

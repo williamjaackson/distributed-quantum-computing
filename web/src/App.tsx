@@ -11,7 +11,7 @@
  * Sessions ride on the same principle. A run is a pure function of
  * `(program, inputs, shots, seed, readout)`, so a host shares those few values
  * and every viewer reproduces the identical timeline locally — no frames cross
- * the network, only the playhead and, once per run, the merged measurement
+ * the network, only the stage layout, playhead and, once per run, the merged measurement
  * (which several machines took together and no single machine can reproduce).
  * A viewer's page is read-only; its machine earns its seat by taking a share
  * of the shots.
@@ -33,6 +33,7 @@ import { InputsPanel } from './components/InputsPanel';
 import { OutputsPanel } from './components/OutputsPanel';
 import { MeasurementPanel } from './components/MeasurementPanel';
 import { SessionPanel } from './components/SessionPanel';
+import type { DistributedMode } from './components/SessionPanel';
 import { Transport } from './components/Transport';
 import { RegisterPanel } from './components/RegisterPanel';
 import { useStageLayout, ViewStage } from './components/ViewStage';
@@ -50,6 +51,7 @@ export function App() {
   // and *not* on an input change, so exploring a slider keeps one trajectory.
   const [seed, setSeed] = useState(() => (Math.random() * 0x7fffffff) >>> 0);
   const [measureAtEnd, setMeasureAtEnd] = useState(false);
+  const [distributedMode, setDistributedMode] = useState<DistributedMode>('shots');
 
   const [timeline, setTimeline] = useState<Timeline | null>(null);
   const [progress, setProgress] = useState<number | null>(null);
@@ -210,18 +212,21 @@ export function App() {
     session.broadcastPlayhead(player.index);
   }, [session, session.role, player.index]);
 
-  // Shared sessions mirror one projection. The newer local stage can tile
-  // several views, so the first pane is the host's canonical shared view.
-  const sharedView = layout.rows[0]?.panes[0]?.id ?? 'qubits';
+  // The complete tiled stage is shared: rows, pane order, divider weights and
+  // per-pane zoom. Viewers render it read-only but otherwise see the same desk.
+  const sharedLayoutKey = JSON.stringify(layout.snapshot);
   useEffect(() => {
     if (session.role !== 'host') return;
-    session.broadcastView(sharedView);
-  }, [session, session.role, sharedView]);
+    session.broadcastLayout(layout.snapshot);
+    // snapshot is represented by the stable structural key to avoid sending
+    // again when an unrelated render creates the equivalent plain object.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [session, session.role, sharedLayoutKey]);
 
   useEffect(() => {
-    if (!viewer || !session.view) return;
-    layout.showOnly(session.view);
-  }, [viewer, session.view, layout.showOnly]);
+    if (!viewer || !session.layout) return;
+    layout.follow(session.layout);
+  }, [viewer, session.layout, layout.follow]);
 
   // Asking to measure re-runs with a readout appended. The collapse is meant to
   // be watched, so playback resumes from where the circuit ended rather than
@@ -439,7 +444,14 @@ export function App() {
             </>
           )}
 
-          <SessionPanel session={session} />
+          <SessionPanel
+            session={session}
+            mode={distributedMode}
+            onMode={setDistributedMode}
+            shots={viewer ? (run?.shots ?? shots) : shots}
+            qubitCeiling={CEILING}
+            maxShardQubits={limits?.maxShardQubits ?? null}
+          />
 
           <RegisterPanel timeline={timeline} limits={limits} />
         </aside>
