@@ -194,6 +194,9 @@ export const qaoa: Program = {
   detail:
     'The circuit is the engine’s own: qaoa.rs builds it from a QaoaConfig and this program only supplies the config. Watch it with the state-vector view open — the cost layer writes each allocation’s shortfall into its phase and the bars do not move at all, which is the step that makes people think nothing happened. The mixer then turns those phases into interference. QAOA is a sampler, so the answer is the cheapest allocation among the shots, not the likeliest outcome: the likeliest is usually mediocre. Raise the shot count and the answer improves; drag γ toward 0.04 and it improves far more, because the optimum goes from 2.5× to 33× as likely. One round is powerful and brittle at once.',
   suggestedView: 'state',
+  // The optimum is about one part in a thousand of the distribution at these
+  // angles, so a thousand shots is a coin toss on finding it at all.
+  shots: 65536,
   inputs: [
     {
       id: 'gamma',

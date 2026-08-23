@@ -177,6 +177,7 @@ states its own default and most want the floor. A sampling optimiser
 whose best outcome carries one part in a thousand of the distribution will miss
 it half the time at a thousand shots and report a worse one with a straight
 face; that is a budget, not a bug, and the program is what knows the difference.
+QAOA is that program, and asks for 65,536 — see below.
 
 Readouts describe the end of the *circuit* — not the playhead, and not the end
 of the timeline. An answer that changes as you scrub is not an answer; and a
@@ -232,6 +233,12 @@ thousand. That gap is the whole character of the algorithm.
 The panel says it in the shape every program uses: the answer is the best
 allocation the shots found, `expected` is the optimum from exhaustive search, and
 the ✓ says whether this run got there.
+
+It asks for 65,536 shots, which is not a round number picked for comfort: the
+optimum carries about one part in a thousand of the distribution at the shipped
+angles, so a thousand shots lands on it roughly half the time. Sixty-odd
+thousand finds it seventy to eighty times, every run. Sampling less is not a
+faster answer, it is a worse one that looks the same.
 
 The answer is the cheapest allocation **among the shots**, which is how
 `tests/qaoa_module.rs` defines it and not the same thing as the likeliest
