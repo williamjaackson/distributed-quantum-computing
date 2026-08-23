@@ -122,6 +122,11 @@ impl Simulator {
         measure::measure(&mut self.sv, qubit, &mut self.rng)
     }
 
+    /// Collapse one qubit onto a given outcome; see [`measure::collapse`].
+    pub fn collapse(&mut self, qubit: u32, outcome: u8) -> Result<(), QsimError> {
+        measure::collapse(&mut self.sv, qubit, outcome)
+    }
+
     /// Sample without collapsing, flattened to `[state, count, state, count, ...]`.
     pub fn sample_flat(&self, shots: u32, seed: u64) -> Vec<f64> {
         let pairs = measure::sample(&self.sv, shots, seed);
@@ -317,6 +322,15 @@ impl JsSimulator {
 
     pub fn measure(&mut self, qubit: u32) -> Result<u32, JsValue> {
         self.inner.measure(qubit).map(|b| b as u32).map_err(js_err)
+    }
+
+    /// Collapse one qubit onto a given outcome rather than a drawn one.
+    ///
+    /// Post-selection. The caller that needs this is one replaying an outcome it
+    /// already knows — a recorded shot, say — where drawing again would give a
+    /// different answer and defeat the point.
+    pub fn collapse(&mut self, qubit: u32, outcome: u32) -> Result<(), JsValue> {
+        self.inner.collapse(qubit, outcome as u8).map_err(js_err)
     }
 
     #[wasm_bindgen(js_name = sampleFlat)]

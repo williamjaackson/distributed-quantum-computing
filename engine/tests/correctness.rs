@@ -1005,3 +1005,82 @@ fn grover_scales_with_a_multi_controlled_oracle() {
         assert_close(sim.norm(), 1.0, &format!("norm after Grover n={n}"));
     }
 }
+
+// ---------------------------------------------------------------------------
+// Post-selection
+//
+// `collapse` is the projection `measure` performs with the outcome supplied
+// rather than drawn. Two callers need the split: a sharded register, where the
+// draw has to happen once against a global marginal no shard can see, and
+// anything replaying an outcome it already knows.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn collapse_matches_what_measure_does_to_the_state() {
+    for n in 1..=4u32 {
+        let amps = random_state(n, 0xC0115E + n as u64);
+        for q in 0..n {
+            // Measure once to learn the outcome, then check collapsing another
+            // copy onto that same outcome lands in the same place.
+            let mut measured = state_from(n, &amps);
+            let mut rng = qsim::rng::Rng::new(0xABCD);
+            let outcome = qsim::measure::measure(&mut measured, q, &mut rng).unwrap();
+
+            let mut projected = state_from(n, &amps);
+            qsim::measure::collapse(&mut projected, q, outcome).unwrap();
+            assert_states_close(
+                projected.amps(),
+                measured.amps(),
+                &format!("collapse(q{q}, {outcome}) against measure, n={n}"),
+            );
+            assert_close(projected.norm(), 1.0, "norm after collapse");
+        }
+    }
+}
+
+#[test]
+fn collapse_can_select_either_branch() {
+    // A qubit in an even superposition can be projected either way, and the
+    // choice decides the outcome rather than chance.
+    for outcome in [0u8, 1] {
+        let mut sim = Simulator::new(2).unwrap();
+        sim.apply_named("h", &[0], &[]).unwrap();
+        sim.apply_named("h", &[1], &[]).unwrap();
+        sim.collapse(0, outcome).unwrap();
+        let p = sim.probabilities().unwrap();
+        let mass: f64 = (0..4).filter(|i| (i >> 0) & 1 == outcome as usize).map(|i| p[i]).sum();
+        assert_close(mass, 1.0, &format!("all probability has qubit 0 = {outcome}"));
+        assert_close(sim.norm(), 1.0, "norm after collapse");
+    }
+}
+
+#[test]
+fn collapsing_every_qubit_reaches_the_chosen_basis_state() {
+    // The operation a replayed readout needs: walk the qubits, forcing each bit,
+    // and end on exactly the state that was asked for.
+    let n = 4u32;
+    let mut sim = Simulator::new(n).unwrap();
+    sim.prepare_uniform().unwrap();
+    let target = 0b1011usize;
+    for q in 0..n {
+        sim.collapse(q, ((target >> q) & 1) as u8).unwrap();
+    }
+    let p = sim.probabilities().unwrap();
+    assert_close(p[target], 1.0, "probability of the chosen state");
+    assert_close(sim.norm(), 1.0, "norm after a full readout");
+}
+
+#[test]
+fn collapse_refuses_an_outcome_the_state_cannot_produce() {
+    // |0> has no |1> branch. Projecting onto one has no answer, and returning an
+    // unnormalised state quietly would be worse than saying so.
+    let mut sim = Simulator::new(2).unwrap();
+    let err = sim.collapse(0, 1).unwrap_err();
+    assert!(
+        matches!(err, qsim::state::QsimError::ImpossibleOutcome { qubit: 0, outcome: 1 }),
+        "expected ImpossibleOutcome, got {err:?}"
+    );
+    // And the state is untouched by the refusal.
+    assert_close(sim.probabilities().unwrap()[0], 1.0, "state after a refused collapse");
+    assert!(sim.collapse(5, 0).is_err(), "qubit out of range");
+}

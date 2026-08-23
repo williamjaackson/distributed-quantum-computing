@@ -174,6 +174,40 @@ pub fn top_amplitudes(sv: &StateVector, k: usize) -> Vec<(u64, C)> {
     out.into_iter().map(|(i, a, _)| (i, a)).collect()
 }
 
+/// Collapse `qubit` onto a *given* outcome, renormalising.
+///
+/// Post-selection: the same projection [`measure`] performs, with the outcome
+/// supplied instead of drawn. Separating the two matters because the draw has to
+/// happen somewhere else in two different situations — a sharded register draws
+/// once against the global marginal because no shard can see it, and a caller
+/// replaying a recorded shot already knows what came up.
+///
+/// Errors if the requested branch holds no probability: projecting onto
+/// something the state cannot produce has no answer, and returning a silently
+/// unnormalised state would be worse than saying so.
+pub fn collapse(sv: &mut StateVector, qubit: u32, outcome: u8) -> Result<(), QsimError> {
+    let p1 = probability_of_one(sv, qubit)?;
+    let p = if outcome == 1 { p1 } else { 1.0 - p1 };
+    if p <= 0.0 {
+        return Err(QsimError::ImpossibleOutcome { qubit, outcome });
+    }
+    project(sv, qubit, outcome, 1.0 / p.sqrt());
+    Ok(())
+}
+
+/// Keep one branch of `qubit`, scaled, and zero the other.
+fn project(sv: &mut StateVector, qubit: u32, outcome: u8, scale: f64) {
+    let step = 1usize << qubit;
+    for block in sv.amps_mut().chunks_exact_mut(step << 1) {
+        let (lo, hi) = block.split_at_mut(step);
+        let (kept, killed) = if outcome == 1 { (hi, lo) } else { (lo, hi) };
+        for x in kept.iter_mut() {
+            *x = x.scale(scale);
+        }
+        killed.fill(C::ZERO);
+    }
+}
+
 /// Measure `qubit`, collapse the state onto the observed outcome, renormalise.
 pub fn measure(sv: &mut StateVector, qubit: u32, rng: &mut Rng) -> Result<u8, QsimError> {
     let p1 = probability_of_one(sv, qubit)?;
@@ -185,18 +219,8 @@ pub fn measure(sv: &mut StateVector, qubit: u32, rng: &mut Rng) -> Result<u8, Qs
     if p <= 0.0 {
         return Ok(outcome);
     }
-    let scale = 1.0 / p.sqrt();
-
-    let step = 1usize << qubit;
-    for block in sv.amps_mut().chunks_exact_mut(step << 1) {
-        let (lo, hi) = block.split_at_mut(step);
-        // Keep the observed branch (rescaled); zero the one that was not seen.
-        let (kept, killed) = if outcome == 1 { (hi, lo) } else { (lo, hi) };
-        for x in kept.iter_mut() {
-            *x = x.scale(scale);
-        }
-        killed.fill(C::ZERO);
-    }
+    // Keep the observed branch (rescaled); zero the one that was not seen.
+    project(sv, qubit, outcome, 1.0 / p.sqrt());
     Ok(outcome)
 }
 
