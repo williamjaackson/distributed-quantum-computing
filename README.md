@@ -1,10 +1,10 @@
-# ROCK
+# Distributed Quantum Computing
 
 Distributed quantum simulation across a network of browsers. Each peer runs part of a Rust/WebAssembly state-vector simulator; WebRTC packets exchange amplitude data so gates and simulated entanglement work across machines. Peers can also split measurement workloads.
 
 Build a circuit, step through it, and watch the shared quantum state change.
 
-![Five-qubit GHZ simulation, from entanglement to measurement](docs/media/ghz-demo.gif)
+[![Five-qubit GHZ simulation showing the qubit map and state vector](docs/media/ghz-demo.png)](docs/media/ghz-demo.png)
 
 Built by **Quantum Bitches** for the **2026 QUT Code Network Hackathon**.
 
